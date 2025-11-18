@@ -11,17 +11,17 @@ const config = createConfig({
   connectors: [
     injected({ shimDisconnect: true }),
     walletConnect({
-      projectId: 'eac2fc87c235ce36192f197cd1c255f3',
+      projectId: 'eac2fc87c235ce36192f197cd1c255f3', // Your WalletConnect project ID
       metadata: {
         name: 'URIM 50/50 Raffle',
-        description: 'Win big with URIM 50/50 Raffle on Base',
+        description: 'Win big with URIM 50/50 Raffle on Base with artwork #874482516',
         url: 'https://urim.live',
         icons: ['https://i.imgur.com/0v5f4rK.png']
       },
       showQrModal: true
     }),
     coinbaseWallet({
-      appName: 'URIM Raffle',
+      appName: 'URIM Raffle #874482516',
       appLogoUrl: 'https://i.imgur.com/0v5f4rK.png'
     })
   ],
