@@ -1,33 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useAccount, useConnect, useDisconnect, useReadContract, useConfig } from 'wagmi';
-import { writeContract, waitForTransactionReceipt, getBalance, readContract } from 'wagmi/actions';
-import { parseUnits, formatUnits, encodeFunctionData } from 'viem';
+import { writeContract, waitForTransactionReceipt, getBalance } from 'wagmi/actions';
+import { parseUnits, formatUnits } from 'viem';
 
 // Contract addresses
 const RAFFLE_CONTRACT = '0x36086C5950325B971E5DC11508AB67A1CE30Dc69';
 const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // Base USDC
-const PERMIT2_CONTRACT = '0x000000000022D473030F116dDEE9F6B43aC78BA3'; // Universal Permit2
 
 // Contract ABIs
 const RAFFLE_ABI = [
   {
     type: 'function',
-    name: 'buyTicketWithPermit2',
-    inputs: [
-      {
-        name: 'permit',
-        type: 'tuple',
-        components: [
-          { name: 'permitted', type: 'tuple', components: [
-            { name: 'token', type: 'address' },
-            { name: 'amount', type: 'uint256' }
-          ]},
-          { name: 'nonce', type: 'uint256' },
-          { name: 'deadline', type: 'uint256' }
-        ]
-      },
-      { name: 'signature', type: 'bytes' }
-    ],
+    name: 'buyTicket',
+    inputs: [],
     outputs: [],
     stateMutability: 'nonpayable',
   }
@@ -63,31 +48,6 @@ const ERC20_ABI = [
   }
 ];
 
-const PERMIT2_ABI = [
-  {
-    type: 'function',
-    name: 'allowance',
-    inputs: [
-      { name: 'user', type: 'address' },
-      { name: 'token', type: 'address' },
-      { name: 'spender', type: 'address' }
-    ],
-    outputs: [
-      { name: 'amount', type: 'uint160' },
-      { name: 'expiration', type: 'uint48' },
-      { name: 'nonce', type: 'uint48' }
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    name: 'DOMAIN_SEPARATOR',
-    inputs: [],
-    outputs: [{ name: '', type: 'bytes32' }],
-    stateMutability: 'view',
-  }
-];
-
 function RaffleApp() {
   const { address, isConnected } = useAccount();
   const { connect, connectors, error: connectError } = useConnect();
@@ -112,24 +72,24 @@ function RaffleApp() {
     query: { enabled: !!address }
   });
 
-  // Read USDC allowance to Permit2
-  const { data: permit2Allowance, refetch: refetchPermit2Allowance } = useReadContract({
+  // Read USDC allowance
+  const { data: usdcAllowance, refetch: refetchAllowance } = useReadContract({
     address: USDC_CONTRACT,
     abi: ERC20_ABI,
     functionName: 'allowance',
-    args: address ? [address, PERMIT2_CONTRACT] : undefined,
+    args: address ? [address, RAFFLE_CONTRACT] : undefined,
     query: { enabled: !!address }
   });
 
-  // Check if user has approved USDC to Permit2
-  const hasPermit2Approval = permit2Allowance && permit2Allowance >= TICKET_PRICE;
+  // Check if user has approved enough USDC
+  const hasApproval = usdcAllowance && usdcAllowance >= TICKET_PRICE;
   const hasBalance = usdcBalance && usdcBalance >= TICKET_PRICE;
 
   // Fetch contract balance (for pot display)
   const fetchContractBalance = async () => {
     try {
       const balance = await getBalance(wagmiConfig, {
-        address: RAFFLE_CONTRACT,
+        address: USDC_CONTRACT,
         token: USDC_CONTRACT,
         chainId: 8453
       });
@@ -148,7 +108,7 @@ function RaffleApp() {
     }
   }, [wagmiConfig, isConnected]);
 
-  // Countdown timer
+  // Countdown timer (mock - replace with actual contract countdown)
   useEffect(() => {
     const timer = setInterval(() => {
       const now = new Date().getTime();
@@ -174,64 +134,8 @@ function RaffleApp() {
     setTimeout(() => setNotification(null), 5000);
   };
 
-  // Helper function to create permit signature
-  const createPermitSignature = async (amount, deadline, nonce) => {
-    if (!address) throw new Error('No address connected');
-
-    // Get domain separator from Permit2
-    const domainSeparator = await readContract(wagmiConfig, {
-      address: PERMIT2_CONTRACT,
-      abi: PERMIT2_ABI,
-      functionName: 'DOMAIN_SEPARATOR',
-    });
-
-    const domain = {
-      name: 'Permit2',
-      chainId: 8453,
-      verifyingContract: PERMIT2_CONTRACT,
-    };
-
-    const types = {
-      PermitSingle: [
-        { name: 'details', type: 'PermitDetails' },
-        { name: 'spender', type: 'address' },
-        { name: 'sigDeadline', type: 'uint256' }
-      ],
-      PermitDetails: [
-        { name: 'token', type: 'address' },
-        { name: 'amount', type: 'uint160' },
-        { name: 'expiration', type: 'uint48' },
-        { name: 'nonce', type: 'uint48' }
-      ]
-    };
-
-    const message = {
-      details: {
-        token: USDC_CONTRACT,
-        amount: amount,
-        expiration: deadline,
-        nonce: nonce
-      },
-      spender: RAFFLE_CONTRACT,
-      sigDeadline: deadline
-    };
-
-    // Request signature from wallet
-    const signature = await window.ethereum?.request({
-      method: 'eth_signTypedData_v4',
-      params: [address, JSON.stringify({
-        types,
-        domain,
-        primaryType: 'PermitSingle',
-        message
-      })],
-    });
-
-    return signature;
-  };
-
-  // Approve USDC to Permit2 (one-time setup)
-  const handleApprovePermit2 = async () => {
+  // Approve USDC spending
+  const handleApprove = async () => {
     if (!address) return;
 
     setIsApproving(true);
@@ -245,10 +149,10 @@ function RaffleApp() {
         address: USDC_CONTRACT,
         abi: ERC20_ABI,
         functionName: 'approve',
-        args: [PERMIT2_CONTRACT, parseUnits('1000000', 6)], // Large allowance for Permit2
+        args: [RAFFLE_CONTRACT, parseUnits('1000000', 6)], // Approve large amount
       });
 
-      showNotification('Permit2 approval submitted! Waiting for confirmation...', 'info');
+      showNotification('Approval submitted! Waiting for confirmation...', 'info');
       
       await waitForTransactionReceipt(wagmiConfig, { 
         hash,
@@ -260,26 +164,26 @@ function RaffleApp() {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
       }
       
-      showNotification('✅ Permit2 approved! You can now buy tickets with exact amounts only.', 'success');
-      refetchPermit2Allowance();
+      showNotification('✅ USDC approved successfully!', 'success');
+      refetchAllowance();
       
     } catch (error) {
-      console.error('Permit2 approval failed:', error);
+      console.error('Approval failed:', error);
       
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('error');
       }
       
-      showNotification('Permit2 approval failed. Please try again.', 'error');
+      showNotification('Approval failed. Please try again.', 'error');
     } finally {
       setIsApproving(false);
     }
   };
 
-  // Buy ticket with Permit2
-  const handleBuyTicketWithPermit2 = async () => {
-    if (!address || !hasPermit2Approval || !hasBalance) {
-      showNotification('Please ensure you have USDC balance and Permit2 approval', 'error');
+  // Buy ticket function
+  const handleBuyTicket = async () => {
+    if (!address || !hasApproval || !hasBalance) {
+      showNotification('Please ensure you have USDC balance and approval', 'error');
       return;
     }
 
@@ -291,38 +195,14 @@ function RaffleApp() {
         window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
       }
 
-      // Get current nonce from Permit2
-      const [amount, expiration, nonce] = await readContract(wagmiConfig, {
-        address: PERMIT2_CONTRACT,
-        abi: PERMIT2_ABI,
-        functionName: 'allowance',
-        args: [address, USDC_CONTRACT, RAFFLE_CONTRACT],
-      });
-
-      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
-
-      // Create permit signature for exact ticket price
-      showNotification('Please sign the permit for exactly 5 USDC...', 'info');
-      
-      const signature = await createPermitSignature(TICKET_PRICE, deadline, nonce);
-
-      const permitData = {
-        permitted: {
-          token: USDC_CONTRACT,
-          amount: TICKET_PRICE
-        },
-        nonce: nonce,
-        deadline: deadline
-      };
-
-      showNotification('Submitting ticket purchase with permit...', 'info');
-
       const hash = await writeContract(wagmiConfig, {
         address: RAFFLE_CONTRACT,
         abi: RAFFLE_ABI,
-        functionName: 'buyTicketWithPermit2',
-        args: [permitData, signature],
+        functionName: 'buyTicket',
+        args: [],
       });
+
+      showNotification('Transaction submitted! Waiting for confirmation...', 'info');
       
       await waitForTransactionReceipt(wagmiConfig, { 
         hash,
@@ -334,15 +214,15 @@ function RaffleApp() {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
       }
       
-      showNotification('🎉 Success! Ticket purchased securely with Permit2!', 'success');
+      showNotification('🎉 Success! Ticket purchased for $5 USDC!', 'success');
       
       // Refresh balances
       refetchBalance();
-      refetchPermit2Allowance();
+      refetchAllowance();
       fetchContractBalance();
       
     } catch (error) {
-      console.error('Permit2 transaction failed:', error);
+      console.error('Transaction failed:', error);
       
       // Error feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
@@ -354,8 +234,6 @@ function RaffleApp() {
         errorMessage = 'Insufficient USDC balance for this transaction.';
       } else if (error.message.includes('rejected')) {
         errorMessage = 'Transaction was rejected.';
-      } else if (error.message.includes('User rejected')) {
-        errorMessage = 'Permit signature was rejected.';
       }
       
       showNotification(errorMessage, 'error');
@@ -367,7 +245,7 @@ function RaffleApp() {
   // Share function
   const shareRaffle = () => {
     const potValue = contractBalance ? formatUnits(contractBalance, 6) : '0';
-    const shareText = `🎰 Join the URIM 50/50 Raffle! Current pot: $${potValue} USDC 💰\n\nSecure Permit2 payments - no unlimited approvals!\nID: 874482516`;
+    const shareText = `🎰 Join the URIM 50/50 Raffle! Current pot: $${potValue} USDC 💰\n\nID: 874482516`;
     const shareUrl = 'https://t.me/URIMRaffleBot';
     
     if (window.Telegram?.WebApp) {
@@ -375,6 +253,7 @@ function RaffleApp() {
         `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`
       );
     } else {
+      // Fallback for testing
       const fullUrl = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`;
       window.open(fullUrl, '_blank');
     }
@@ -397,7 +276,7 @@ function RaffleApp() {
         <div className="text-center pt-6 pb-4">
           <div className="relative mb-4">
             <img 
-              src="https://www.infinityg.ai/assets/user-upload/1763444371347-1723df0c-8fbf-4fa3-9dda-241ca90a93cd.jpg"
+              src="https://www.infinityg.ai/assets/user-upload/1763445354073-ChatGPT%20Image%20Nov%2012,%202025,%2009_22_49%20AM.png"
               alt="URIM 5050 Raffle"
               className="w-full max-w-sm mx-auto rounded-xl shadow-2xl animate-pulse-glow"
             />
@@ -408,18 +287,7 @@ function RaffleApp() {
           <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
             URIM 50/50 Raffle
           </h1>
-          <p className="text-sm text-gray-300 mt-1">Secure Permit2 payments on Base!</p>
-        </div>
-
-        {/* Security Badge */}
-        <div className="glass-card rounded-xl p-4 text-center border-green-500/30">
-          <div className="flex items-center justify-center space-x-2 mb-2">
-            <span className="text-green-400">🔒</span>
-            <span className="text-sm font-semibold text-green-400">Enhanced Security</span>
-          </div>
-          <p className="text-xs text-gray-300">
-            Powered by Permit2 - No unlimited token approvals required!
-          </p>
+          <p className="text-sm text-gray-300 mt-1">Win big on Base Network with USDC!</p>
         </div>
 
         {/* Current Pot */}
@@ -429,7 +297,7 @@ function RaffleApp() {
             ${contractBalance ? formatUnits(contractBalance, 6) : '0.00'} USDC
           </div>
           <div className="text-sm text-gray-400">
-            Base Network • Exact-amount approvals only
+            Base Network • Powered by USDC
           </div>
         </div>
 
@@ -499,7 +367,7 @@ function RaffleApp() {
                 {usdcBalance ? formatUnits(usdcBalance, 6) : '0.00'} USDC
               </div>
               <div className="text-xs text-gray-500 mt-1">
-                Ticket price: 5.00 USDC (exact amount)
+                Ticket price: 5.00 USDC
               </div>
             </div>
 
@@ -520,17 +388,6 @@ function RaffleApp() {
             <div className="glass-card rounded-xl p-6">
               <h3 className="text-lg font-semibold mb-4 text-center">🎫 Buy Raffle Ticket</h3>
 
-              {/* Permit2 Info */}
-              <div className="bg-green-900/20 rounded-lg p-3 mb-4 border border-green-500/30">
-                <div className="flex items-center space-x-2 mb-1">
-                  <span className="text-green-400">🔒</span>
-                  <span className="text-sm font-semibold text-green-400">Permit2 Security</span>
-                </div>
-                <p className="text-xs text-gray-300">
-                  Sign permits for exact amounts only. No unlimited approvals required!
-                </p>
-              </div>
-
               {/* Purchase Summary */}
               <div className="bg-gray-800 rounded-lg p-4 mb-6 space-y-2">
                 <div className="flex justify-between text-sm">
@@ -544,35 +401,35 @@ function RaffleApp() {
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Permit2 Setup:</span>
-                  <span className={`font-semibold ${hasPermit2Approval ? 'text-green-400' : 'text-yellow-400'}`}>
-                    {hasPermit2Approval ? '✅ Ready' : '⏳ Required'}
+                  <span className="text-gray-400">Approval Status:</span>
+                  <span className={`font-semibold ${hasApproval ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {hasApproval ? '✅ Approved' : '⏳ Required'}
                   </span>
                 </div>
               </div>
 
               {/* Buttons */}
               <div className="space-y-3">
-                {!hasPermit2Approval && (
+                {!hasApproval && (
                   <button
-                    onClick={handleApprovePermit2}
+                    onClick={handleApprove}
                     disabled={isApproving || !hasBalance}
                     className="w-full bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-700 hover:to-orange-700 disabled:from-gray-600 disabled:to-gray-700 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 disabled:scale-100 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
                   >
                     {isApproving ? (
                       <>
                         <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                        <span>Setting up Permit2...</span>
+                        <span>Approving USDC...</span>
                       </>
                     ) : (
-                      <span>🔓 Enable Permit2 (One-time setup)</span>
+                      <span>🔓 Approve USDC Spending</span>
                     )}
                   </button>
                 )}
 
                 <button
-                  onClick={handleBuyTicketWithPermit2}
-                  disabled={isTransacting || !hasPermit2Approval || !hasBalance}
+                  onClick={handleBuyTicket}
+                  disabled={isTransacting || !hasApproval || !hasBalance}
                   className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-600 disabled:to-gray-700 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 disabled:scale-100 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
                 >
                   {isTransacting ? (
@@ -581,7 +438,7 @@ function RaffleApp() {
                       <span>Processing...</span>
                     </>
                   ) : (
-                    <span>🔒 Buy Ticket with Permit2 ($5 USDC)</span>
+                    <span>🎫 Buy Raffle Ticket ($5 USDC)</span>
                   )}
                 </button>
               </div>
@@ -598,19 +455,18 @@ function RaffleApp() {
               onClick={shareRaffle}
               className="w-full bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-700 hover:to-rose-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105"
             >
-              📢 Share Secure Raffle
+              📢 Share with Friends
             </button>
           </>
         )}
 
         {/* Footer Info */}
         <div className="glass-card rounded-xl p-4 text-center text-sm">
-          <div className="text-gray-400 mb-2">🔮 Enhanced Features:</div>
+          <div className="text-gray-400 mb-2">🔮 Features:</div>
           <div className="text-gray-500 space-y-1">
-            <div>• Permit2 Security (No unlimited approvals)</div>
-            <div>• Exact-amount transactions only</div>
             <div>• USDC Payments on Base</div>
             <div>• 50/50 Prize Split</div>
+            <div>• Instant Payouts</div>
           </div>
         </div>
 
@@ -618,7 +474,6 @@ function RaffleApp() {
         <div className="text-center text-xs text-gray-500 space-y-1 pb-6">
           <div>Raffle: {RAFFLE_CONTRACT.slice(0, 10)}...{RAFFLE_CONTRACT.slice(-6)}</div>
           <div>USDC: {USDC_CONTRACT.slice(0, 10)}...{USDC_CONTRACT.slice(-6)}</div>
-          <div>Permit2: {PERMIT2_CONTRACT.slice(0, 10)}...{PERMIT2_CONTRACT.slice(-6)}</div>
           <div>Base Network • ID: 874482516</div>
         </div>
       </div>
