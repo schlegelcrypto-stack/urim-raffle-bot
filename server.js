@@ -50,63 +50,70 @@ function verifyAlchemySignature(payload, signature) {
   return signature === `v0=${expectedSignature}`;
 }
 
-// Function to read contract data via RPC
-async function readContractData() {
+// **FIXED: Separate Telegram bot webhook endpoint**
+app.post('/webhook/telegram', async (req, res) => {
   try {
-    console.log('Reading real contract data...');
+    const { message, callback_query } = req.body;
     
-    // Call getCurrentRoundInfo
-    const roundInfoCall = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'eth_call',
-      params: [{
-        to: RAFFLE_CONTRACT,
-        data: '0x9a7a23d6' // getCurrentRoundInfo() function selector
-      }, 'latest']
-    };
+    console.log('Telegram webhook received:', { message: message?.text, callback_query: callback_query?.data });
 
-    const response = await axios.post(BASE_RPC_URL, roundInfoCall, {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    if (message) {
+      const chatId = message.chat.id;
+      const userId = message.from.id;
+      const text = message.text;
 
-    if (response.data.result) {
-      // Decode the hex result (simplified - in production use proper ABI decoding)
-      const result = response.data.result;
-      console.log('Contract call result:', result);
-      
-      // For now, we'll update with webhook events instead of parsing the hex data
-      // This is where you'd decode the ABI-encoded response
+      console.log(`Received message: "${text}" from user: ${userId} in chat: ${chatId}`);
+
+      if (text === '/start') {
+        console.log('Sending start message to chat:', chatId);
+        await sendWebAppMessage(chatId);
+      } else if (text === '/stats') {
+        await sendStatsMessage(chatId);
+      } else if (text === '/help') {
+        await sendHelpMessage(chatId);
+      } else {
+        // Unknown command - send help
+        await sendHelpMessage(chatId);
+      }
     }
 
-    // Call getCurrentPlayers
-    const playersCall = {
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'eth_call',
-      params: [{
-        to: RAFFLE_CONTRACT,
-        data: '0x1e5b8a6a' // getCurrentPlayers() function selector
-      }, 'latest']
-    };
+    if (callback_query) {
+      const chatId = callback_query.message.chat.id;
+      const userId = callback_query.from.id;
+      const data = callback_query.data;
+      
+      console.log(`Callback query: ${data} from user: ${userId}`);
+      
+      if (data === 'view_stats') {
+        await sendStatsMessage(chatId);
+      } else if (data === 'refresh_stats') {
+        await sendStatsMessage(chatId);
+      } else if (data === 'share_raffle') {
+        await sendShareMessage(chatId);
+      }
+      
+      // Answer callback query
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+        callback_query_id: callback_query.id,
+        text: '✅ Action completed!'
+      });
+    }
 
-    const playersResponse = await axios.post(BASE_RPC_URL, playersCall, {
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    console.log('Players call result:', playersResponse.data);
-
+    res.status(200).json({ ok: true });
   } catch (error) {
-    console.error('Error reading contract data:', error.message);
+    console.error('Telegram webhook error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-}
+});
 
-// Alchemy webhook endpoint for real-time contract events
-app.post('/webhook', async (req, res) => {
+// **FIXED: Separate Alchemy webhook endpoint for contract events**
+app.post('/webhook/alchemy', async (req, res) => {
   try {
     const signature = req.headers['x-alchemy-signature'];
     const payload = JSON.stringify(req.body);
     
+    console.log('Alchemy webhook received');
+
     // Verify Alchemy webhook signature for security
     if (!verifyAlchemySignature(payload, signature)) {
       console.log('Invalid Alchemy signature');
@@ -115,7 +122,7 @@ app.post('/webhook', async (req, res) => {
 
     const { webhookId, id, createdAt, type, event } = req.body;
     
-    console.log('Alchemy webhook received:', { type, event: event?.activity?.[0] });
+    console.log('Alchemy webhook data:', { type, event: event?.activity?.[0] });
 
     if (type === 'ADDRESS_ACTIVITY' && event?.activity) {
       for (const activity of event.activity) {
@@ -132,7 +139,7 @@ app.post('/webhook', async (req, res) => {
           contractState.totalPlayers++;
           contractState.totalUSDC = (parseFloat(contractState.totalUSDC) + 5.0).toFixed(2);
           
-          // Broadcast update to all connected clients (in production, use WebSockets)
+          // Broadcast update to all connected clients
           await broadcastContractUpdate();
           
           // Optionally notify Telegram channel about new ticket
@@ -141,14 +148,12 @@ app.post('/webhook', async (req, res) => {
 
         // Handle winner selection events
         if (activity.log && activity.log.topics && activity.log.topics[0] === '0x...') {
-          // This would be the WinnerSelected event topic hash
           console.log('Winner selected event detected');
           await handleWinnerSelection(activity);
         }
 
-        // Handle round started events
+        // Handle round started events  
         if (activity.log && activity.log.topics && activity.log.topics[0] === '0x...') {
-          // This would be the RoundStarted event topic hash
           console.log('New round started');
           await handleNewRound(activity);
         }
@@ -157,16 +162,15 @@ app.post('/webhook', async (req, res) => {
 
     res.status(200).json({ received: true });
   } catch (error) {
-    console.error('Webhook error:', error);
+    console.error('Alchemy webhook error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Function to broadcast contract updates (in production, use WebSockets or Server-Sent Events)
+// Function to broadcast contract updates
 async function broadcastContractUpdate() {
   console.log('Broadcasting contract update:', contractState);
   // In a real implementation, you'd broadcast to all connected WebSocket clients
-  // For now, we'll just log the update
 }
 
 // Function to notify about ticket purchases
@@ -176,9 +180,6 @@ async function notifyTicketPurchase(buyer, txHash) {
     const shortTx = `${txHash.slice(0, 8)}...`;
     
     console.log(`🎫 New ticket purchased by ${shortAddress} (tx: ${shortTx})`);
-    
-    // Optionally send to a Telegram channel
-    // await sendToTelegramChannel(`🎫 New ticket purchased!\n👤 ${shortAddress}\n💰 +$5 USDC\n📊 Total: $${contractState.totalUSDC}\n🔗 ${shortTx}`);
     
   } catch (error) {
     console.error('Error notifying ticket purchase:', error);
@@ -231,53 +232,6 @@ app.get('/api/contract-state', (req, res) => {
   });
 });
 
-// Telegram bot webhook endpoint
-app.post('/telegram-webhook', async (req, res) => {
-  try {
-    const { message, callback_query } = req.body;
-    
-    if (message) {
-      const chatId = message.chat.id;
-      const userId = message.from.id;
-      const text = message.text;
-
-      console.log(`Received message: ${text} from user: ${userId}`);
-
-      if (text === '/start') {
-        await sendWebAppMessage(chatId);
-      } else if (text === '/stats') {
-        await sendStatsMessage(chatId);
-      }
-    }
-
-    if (callback_query) {
-      const chatId = callback_query.message.chat.id;
-      const userId = callback_query.from.id;
-      const data = callback_query.data;
-      
-      console.log(`Callback query: ${data} from user: ${userId}`);
-      
-      if (data === 'view_stats') {
-        await sendStatsMessage(chatId);
-      } else if (data === 'refresh_stats') {
-        await sendStatsMessage(chatId);
-      } else if (data === 'share_raffle') {
-        await sendShareMessage(chatId);
-      }
-      
-      // Answer callback query
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-        callback_query_id: callback_query.id
-      });
-    }
-
-    res.status(200).json({ ok: true });
-  } catch (error) {
-    console.error('Telegram webhook error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
 // Serve the main raffle app
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
@@ -303,11 +257,11 @@ function formatTimeLeft(seconds) {
   }
 }
 
-// Function to send web app message
+// **FIXED: Function to send web app message with proper error handling**
 async function sendWebAppMessage(chatId) {
   const message = {
     chat_id: chatId,
-    text: '🎰 *URIM 50/50 Raffle* 🎰\n\n💰 Win big on Base Network!\n🎫 Tickets: $5 USDC each\n🏆 50% goes to winner\n⚡ Powered by USDC payments\n\n🌐 Visit: urim.live/lottery\n\nTap "Play Raffle" to start!',
+    text: '🎰 *URIM 50/50 Raffle* 🎰\n\n💰 Current Pot: $' + contractState.totalUSDC + ' USDC\n👥 Players: ' + contractState.totalPlayers + '\n🎫 Tickets: $5 USDC each\n🏆 50% goes to winner\n⚡ Powered by USDC on Base\n\n🌐 Visit: urim.live/lottery\n\nTap "🎮 Play Raffle" to start!',
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
@@ -334,10 +288,12 @@ async function sendWebAppMessage(chatId) {
   };
 
   try {
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
-    console.log('Web app message sent successfully');
+    const response = await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
+    console.log('✅ Web app message sent successfully to chat:', chatId);
+    return response.data;
   } catch (error) {
-    console.error('Error sending web app message:', error.response?.data || error.message);
+    console.error('❌ Error sending web app message:', error.response?.data || error.message);
+    throw error;
   }
 }
 
@@ -345,18 +301,18 @@ async function sendWebAppMessage(chatId) {
 async function sendStatsMessage(chatId) {
   const timeLeftFormatted = formatTimeLeft(Math.floor((contractState.endTime - Date.now()) / 1000));
   
-  const statsText = `🎰 URIM 50/50 Raffle Stats 🎰
+  const statsText = `🎰 *URIM 50/50 Raffle Stats* 🎰
 
 📊 *Current Round:* #${contractState.roundId}
 💰 *Total Pot:* $${contractState.totalUSDC} USDC  
 👥 *Players:* ${contractState.totalPlayers}
 ⏰ *Time Left:* ${timeLeftFormatted}
 
-🔗 *Contract:* \`${RAFFLE_CONTRACT}\`
+🔗 *Contract:* \`${RAFFLE_CONTRACT.slice(0, 10)}...${RAFFLE_CONTRACT.slice(-6)}\`
 🌐 *Network:* Base (Chain ID: 8453)
 💎 *Token:* USDC
 
-_✅ Real-time data from Alchemy webhooks_`;
+_✅ Real-time data via Alchemy webhooks_`;
 
   const message = {
     chat_id: chatId,
@@ -382,9 +338,9 @@ _✅ Real-time data from Alchemy webhooks_`;
 
   try {
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
-    console.log('Stats message sent successfully');
+    console.log('✅ Stats message sent successfully');
   } catch (error) {
-    console.error('Error sending stats message:', error.response?.data || error.message);
+    console.error('❌ Error sending stats message:', error.response?.data || error.message);
   }
 }
 
@@ -425,16 +381,64 @@ Join now: @URIMRaffleBot`;
 
   try {
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
-    console.log('Share message sent successfully');
+    console.log('✅ Share message sent successfully');
   } catch (error) {
-    console.error('Error sending share message:', error.response?.data || error.message);
+    console.error('❌ Error sending share message:', error.response?.data || error.message);
+  }
+}
+
+// **NEW: Function to send help message**
+async function sendHelpMessage(chatId) {
+  const helpText = `🎰 *URIM Raffle Bot Help* 🎰
+
+*Available Commands:*
+/start - Start the raffle bot
+/stats - View current round statistics
+/help - Show this help message
+
+*How to Play:*
+1️⃣ Connect your wallet
+2️⃣ Get USDC on Base network
+3️⃣ Buy raffle tickets for $5 USDC each
+4️⃣ Wait for the draw
+5️⃣ Winner gets 50% of the pot!
+
+*Features:*
+• Real-time updates via Alchemy
+• Secure USDC payments on Base
+• Instant automated payouts
+• Transparent smart contracts
+
+Need help? Contact: @URIMSupport`;
+
+  const message = {
+    chat_id: chatId,
+    text: helpText,
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: '🎮 Play Raffle',
+            web_app: {
+              url: DOMAIN
+            }
+          }
+        ]
+      ]
+    }
+  };
+
+  try {
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
+    console.log('✅ Help message sent successfully');
+  } catch (error) {
+    console.error('❌ Error sending help message:', error.response?.data || error.message);
   }
 }
 
 // Periodically update contract state every 5 minutes
-setInterval(async () => {
-  await readContractData();
-  
+setInterval(() => {
   // Update time left
   const currentTime = Date.now();
   if (contractState.endTime > currentTime) {
@@ -452,8 +456,29 @@ app.get('/health', (req, res) => {
     domain: DOMAIN,
     botToken: BOT_TOKEN ? 'configured' : 'missing',
     alchemyWebhook: ALCHEMY_SIGNING_KEY ? 'configured' : 'missing',
-    contractState: contractState
+    contractState: contractState,
+    webhookEndpoints: {
+      telegram: `${DOMAIN}/webhook/telegram`,
+      alchemy: `${DOMAIN}/webhook/alchemy`
+    }
   });
+});
+
+// Test endpoint for debugging
+app.get('/test-telegram', async (req, res) => {
+  try {
+    const testMessage = await axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`);
+    res.json({
+      status: 'success',
+      bot: testMessage.data,
+      webhookInfo: `Use: ${DOMAIN}/webhook/telegram`
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      error: error.message
+    });
+  }
 });
 
 // Catch all other routes and serve index.html
@@ -464,12 +489,13 @@ app.get('*', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 URIM Raffle Bot server running on port ${PORT}`);
   console.log(`🌐 Domain: ${DOMAIN}`);
-  console.log(`🤖 Bot token: ${BOT_TOKEN ? 'configured' : 'missing'}`);
-  console.log(`🔗 Alchemy webhook: ${ALCHEMY_SIGNING_KEY ? 'configured' : 'missing'}`);
-  console.log(`📡 Webhook URL: ${DOMAIN}/webhook`);
-  
-  // Read initial contract data
-  readContractData();
+  console.log(`🤖 Bot token: ${BOT_TOKEN ? 'configured ✅' : 'missing ❌'}`);
+  console.log(`🔗 Alchemy webhook: ${ALCHEMY_SIGNING_KEY ? 'configured ✅' : 'missing ❌'}`);
+  console.log('📡 Webhook endpoints:');
+  console.log(`   📱 Telegram: ${DOMAIN}/webhook/telegram`);
+  console.log(`   ⚡ Alchemy: ${DOMAIN}/webhook/alchemy`);
+  console.log(`🔍 Health check: ${DOMAIN}/health`);
+  console.log(`🧪 Test endpoint: ${DOMAIN}/test-telegram`);
 });
 
 module.exports = app;
