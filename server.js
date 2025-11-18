@@ -12,6 +12,10 @@ const DOMAIN = process.env.DOMAIN || 'https://urim-raffle-bot.vercel.app';
 const ALCHEMY_WEBHOOK_ID = 'wh_sscvh18lgmflvsec';
 const ALCHEMY_SIGNING_KEY = 'whsec_Asz7YV5pUCJaeCJWvU65Cr2P';
 
+// Contract addresses for tracking
+const RAFFLE_CONTRACT = '0x36086C5950325B971E5DC11508AB67A1CE30Dc69';
+const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
 // Middleware with better error handling
 app.use(express.json({ 
   limit: '50mb',
@@ -37,15 +41,89 @@ app.use(express.static(__dirname, {
   }
 }));
 
-// In-memory storage for real-time data
+// Real-time storage for blockchain data (updated via webhooks)
 let raffleData = {
-  pot: '125.50',
-  participants: 23,
-  lastUpdate: Date.now()
+  pot: '0.00',
+  participants: 0,
+  lastUpdate: Date.now(),
+  isActive: true,
+  drawTime: 0,
+  recentTransactions: []
 };
 
 let subscribers = new Set();
 let notificationSubscribers = new Set();
+
+// Blockchain data fetcher using Alchemy API
+async function fetchRealRaffleData() {
+  try {
+    const ALCHEMY_API_KEY = 'k4eFyqRJF-l4ydqIKPXOoP_Hny3PF7Wd'; // Base network key
+    const ALCHEMY_URL = `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+
+    // Get USDC balance of raffle contract (represents pot)
+    const potResponse = await axios.post(ALCHEMY_URL, {
+      jsonrpc: '2.0',
+      method: 'eth_call',
+      params: [
+        {
+          to: USDC_CONTRACT,
+          data: '0x70a08231000000000000000000000000' + RAFFLE_CONTRACT.slice(2) // balanceOf(raffleContract)
+        },
+        'latest'
+      ],
+      id: 1
+    }, { timeout: 10000 });
+
+    // Convert hex result to decimal and format as USDC (6 decimals)
+    if (potResponse.data.result) {
+      const potHex = potResponse.data.result;
+      const potBigInt = BigInt(potHex);
+      const potUsdc = Number(potBigInt) / 1000000; // 6 decimals for USDC
+      
+      raffleData.pot = potUsdc.toFixed(2);
+      raffleData.lastUpdate = Date.now();
+      
+      console.log('📊 Real pot data fetched:', raffleData.pot, 'USDC');
+    }
+
+    // Get recent transactions to the raffle contract
+    const txResponse = await axios.get(`https://api.basescan.org/api`, {
+      params: {
+        module: 'account',
+        action: 'txlist',
+        address: RAFFLE_CONTRACT,
+        startblock: 0,
+        endblock: 99999999,
+        page: 1,
+        offset: 10,
+        sort: 'desc',
+        apikey: 'YourApiKeyToken' // You'll need a BaseScan API key
+      },
+      timeout: 10000
+    });
+
+    if (txResponse.data.status === '1' && txResponse.data.result) {
+      // Count successful ticket purchases (transactions to raffle contract)
+      const recentTxs = txResponse.data.result.filter(tx => 
+        tx.isError === '0' && 
+        tx.to.toLowerCase() === RAFFLE_CONTRACT.toLowerCase()
+      );
+      
+      raffleData.participants = recentTxs.length;
+      raffleData.recentTransactions = recentTxs.slice(0, 5);
+      
+      console.log('🎫 Participants updated:', raffleData.participants);
+    }
+
+  } catch (error) {
+    console.error('Failed to fetch real raffle data:', error.message);
+    // Keep existing data on error
+  }
+}
+
+// Initialize real data fetching
+fetchRealRaffleData();
+setInterval(fetchRealRaffleData, 30000); // Update every 30 seconds
 
 // Improved signature verification for Alchemy
 function verifyAlchemySignature(payload, signature) {
@@ -72,16 +150,16 @@ function verifyAlchemySignature(payload, signature) {
   }
 }
 
-// Enhanced Alchemy webhook with better error handling
-app.post('/alchemy-webhook', (req, res) => {
+// Enhanced Alchemy webhook with real-time data updates
+app.post('/alchemy-webhook', async (req, res) => {
   try {
     const signature = req.headers['x-alchemy-signature'] || req.headers['alchemy-signature'];
     const payload = req.rawBody ? req.rawBody.toString() : JSON.stringify(req.body);
     
-    console.log('Alchemy webhook received:', {
+    console.log('📡 Alchemy webhook received:', {
       webhookId: req.body.webhookId,
       hasSignature: !!signature,
-      bodySize: payload.length
+      activities: req.body.event?.activity?.length || 0
     });
     
     // Verify signature if provided
@@ -100,7 +178,7 @@ app.post('/alchemy-webhook', (req, res) => {
 
     // Process transactions
     if (event?.activity) {
-      event.activity.forEach(activity => {
+      for (const activity of event.activity) {
         console.log('Processing activity:', {
           hash: activity.hash,
           from: activity.fromAddress,
@@ -109,31 +187,45 @@ app.post('/alchemy-webhook', (req, res) => {
         });
 
         // Check for raffle contract interactions
-        if (activity.toAddress?.toLowerCase() === '0x36086C5950325B971E5DC11508AB67A1CE30Dc69'.toLowerCase()) {
-          const ticketPrice = 5;
-          const currentPot = parseFloat(raffleData.pot) + ticketPrice;
+        if (activity.toAddress?.toLowerCase() === RAFFLE_CONTRACT.toLowerCase()) {
+          console.log('🎫 Raffle contract interaction detected!');
           
-          raffleData.pot = currentPot.toFixed(2);
-          raffleData.participants += 1;
-          raffleData.lastUpdate = Date.now();
+          // Immediately fetch updated data
+          await fetchRealRaffleData();
           
-          console.log('🎫 New ticket purchased!', {
-            pot: raffleData.pot,
-            participants: raffleData.participants
-          });
-
-          // Notify subscribers
+          // Notify subscribers about the update
           notifySubscribers({
             type: 'ticket_purchased',
             pot: raffleData.pot,
             participants: raffleData.participants,
-            buyer: activity.fromAddress?.slice(0, 6) + '...' + activity.fromAddress?.slice(-4)
+            buyer: activity.fromAddress?.slice(0, 6) + '...' + activity.fromAddress?.slice(-4),
+            hash: activity.hash
           });
 
           // Send Telegram notifications
-          sendNotificationToSubscribers(`🎫 New ticket purchased! Pot is now $${raffleData.pot} USDC`);
+          await sendNotificationToSubscribers(
+            `🎫 *New ticket purchased!*\n\n` +
+            `💰 Pot: $${raffleData.pot} USDC\n` +
+            `🎫 Total tickets: ${raffleData.participants}\n` +
+            `🏆 Current winner prize: $${(parseFloat(raffleData.pot) * 0.5).toFixed(2)} USDC\n\n` +
+            `View: [BaseScan](https://basescan.org/tx/${activity.hash})`
+          );
         }
-      });
+
+        // Check for USDC transfers to raffle contract (manual pot additions)
+        if (activity.toAddress?.toLowerCase() === RAFFLE_CONTRACT.toLowerCase() && 
+            activity.asset === 'USDC') {
+          console.log('💰 USDC transfer to raffle detected!');
+          
+          await fetchRealRaffleData();
+          
+          notifySubscribers({
+            type: 'pot_increased',
+            pot: raffleData.pot,
+            participants: raffleData.participants
+          });
+        }
+      }
     }
 
     res.status(200).json({ success: true, processed: true });
@@ -165,7 +257,8 @@ async function sendNotificationToSubscribers(message) {
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
         chat_id: chatId,
         text: message,
-        parse_mode: 'Markdown'
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true
       }, { timeout: 10000 });
     } catch (error) {
       console.error(`Failed to send notification to ${chatId}:`, error.response?.data);
@@ -210,7 +303,7 @@ app.post('/webhook', async (req, res) => {
           await sendStartMessage(chatId, userName);
         } else if (text === '/help') {
           await sendHelpMessage(chatId);
-        } else if (text === '/status') {
+        } else if (text === '/status' || text === '/stats') {
           await sendStatsMessage(chatId);
         } else if (text === '/notify on' || text === '/notify') {
           notificationSubscribers.add(chatId);
@@ -218,6 +311,8 @@ app.post('/webhook', async (req, res) => {
         } else if (text === '/notify off') {
           notificationSubscribers.delete(chatId);
           await sendNotificationSettingsMessage(chatId, false);
+        } else if (text === '/pot' || text === '/balance') {
+          await sendPotMessage(chatId);
         } else if (text.startsWith('/')) {
           // Handle unknown commands
           await sendUnknownCommandMessage(chatId, text);
@@ -245,6 +340,8 @@ app.post('/webhook', async (req, res) => {
 
         if (data === 'view_stats') {
           await sendStatsMessage(chatId);
+        } else if (data === 'view_pot') {
+          await sendPotMessage(chatId);
         } else if (data === 'enable_notifications') {
           notificationSubscribers.add(chatId);
           await sendNotificationSettingsMessage(chatId, true);
@@ -253,6 +350,9 @@ app.post('/webhook', async (req, res) => {
           await sendNotificationSettingsMessage(chatId, false);
         } else if (data === 'refresh_app') {
           await sendStartMessage(chatId, callback_query.from.first_name || 'User');
+        } else if (data === 'refresh_data') {
+          await fetchRealRaffleData();
+          await sendStatsMessage(chatId);
         }
       } catch (error) {
         console.error('Error handling callback:', error);
@@ -266,23 +366,29 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Enhanced start message with better error handling
+// Enhanced start message with real data
 async function sendStartMessage(chatId, userName) {
+  // Fetch latest data before showing
+  await fetchRealRaffleData();
+  
+  const winnerPrize = (parseFloat(raffleData.pot) * 0.5).toFixed(2);
+  
   const message = {
     chat_id: chatId,
     text: `🎰 *Welcome ${userName}!* 🎰
 
 🔥 *URIM 50/50 Raffle* 🔥
 
-💰 Current Pot: $${raffleData.pot} USDC
-🎫 Tickets Sold: ${raffleData.participants}
-💵 Ticket Price: $5.00 USDC
-🏆 50% to winner, 50% to next pot
-⚡ Instant payouts on Base Network
+💰 *Live Pot:* $${raffleData.pot} USDC
+🎫 *Tickets Sold:* ${raffleData.participants}
+🏆 *Winner Gets:* $${winnerPrize} USDC
+💵 *Ticket Price:* $5.00 USDC
+⚡ *Network:* Base • Real-time data
+🔄 *Last Update:* ${new Date(raffleData.lastUpdate).toLocaleTimeString()}
 
 🎮 Tap "Play Raffle" to start!
 
-*Testing Mode - @schlegelcrypto*`,
+*Live contract data - Testing Mode @schlegelcrypto*`,
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
@@ -296,22 +402,28 @@ async function sendStartMessage(chatId, userName) {
         ],
         [
           {
-            text: '📊 View Stats',
+            text: '📊 Live Stats',
             callback_data: 'view_stats'
           },
           {
+            text: '💰 Pot Info',
+            callback_data: 'view_pot'
+          }
+        ],
+        [
+          {
             text: '🔔 Notifications',
             callback_data: notificationSubscribers.has(chatId) ? 'disable_notifications' : 'enable_notifications'
+          },
+          {
+            text: '🔄 Refresh',
+            callback_data: 'refresh_data'
           }
         ],
         [
           {
             text: '🌐 Website',
             url: 'https://urim.live/lottery'
-          },
-          {
-            text: '🔄 Refresh',
-            callback_data: 'refresh_app'
           }
         ]
       ]
@@ -330,72 +442,90 @@ async function sendStartMessage(chatId, userName) {
   }
 }
 
-async function sendHelpMessage(chatId) {
-  const helpText = `🤖 *URIM Raffle Bot Help*
+async function sendPotMessage(chatId) {
+  await fetchRealRaffleData();
+  
+  const winnerPrize = (parseFloat(raffleData.pot) * 0.5).toFixed(2);
+  const nextPot = winnerPrize;
+  
+  const potText = `💰 *Live Pot Information*
 
-*Commands:*
-/start - Launch the raffle app
-/help - Show this help
-/status - View live statistics  
-/notify on - Enable notifications
-/notify off - Disable notifications
+🏆 *Current Total:* $${raffleData.pot} USDC
+🎫 *From Tickets:* ${raffleData.participants} × $5.00
+💰 *Prize Split:*
+  • Winner: $${winnerPrize} USDC (50%)
+  • Next Pot: $${nextPot} USDC (50%)
 
-*How to Play:*
-1️⃣ Connect your wallet in the app
-2️⃣ Buy tickets with USDC ($5 each)
-3️⃣ Wait for the draw
-4️⃣ Win 50% of the pot!
+📊 *Contract Info:*
+• Address: \`${RAFFLE_CONTRACT.slice(0, 8)}...${RAFFLE_CONTRACT.slice(-6)}\`
+• Token: USDC on Base Network
+• Real-time blockchain data
 
-*Features:*
-🔔 Real-time notifications
-📈 Live pot tracking
-⚡ Instant payouts
-🔐 Secure smart contracts
+🔄 *Last Updated:* ${new Date(raffleData.lastUpdate).toLocaleTimeString()}
 
-*Network:* Base
-*Contract:* 0x36086...30Dc69
-*Token:* USDC
-
-*Testing Mode - @schlegelcrypto*`;
+*Data pulled directly from Base blockchain*`;
   
   try {
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       chat_id: chatId,
-      text: helpText,
-      parse_mode: 'Markdown'
+      text: potText,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: '🎮 Play Now',
+              web_app: { url: DOMAIN }
+            },
+            {
+              text: '🔄 Refresh',
+              callback_data: 'view_pot'
+            }
+          ],
+          [
+            {
+              text: '📊 Full Stats',
+              callback_data: 'view_stats'
+            }
+          ]
+        ]
+      }
     }, { timeout: 10000 });
   } catch (error) {
-    console.error('Error sending help message:', error);
+    console.error('Error sending pot message:', error);
   }
 }
 
 async function sendStatsMessage(chatId) {
+  await fetchRealRaffleData();
+  
   const winnerPayout = (parseFloat(raffleData.pot) * 0.5).toFixed(2);
+  const uniquePlayers = Math.max(1, Math.ceil(raffleData.participants * 0.8));
+  
   const statsText = `📊 *Live Raffle Statistics*
 
 🎫 *Raffle ID:* #874482516
-💰 *Current Pot:* $${raffleData.pot} USDC
+💰 *Real-Time Pot:* $${raffleData.pot} USDC
 🎯 *Tickets Sold:* ${raffleData.participants}
-👥 *Unique Players:* ${Math.ceil(raffleData.participants * 0.8)}
-⏰ *Last Update:* ${new Date(raffleData.lastUpdate).toLocaleTimeString()}
+👥 *Estimated Players:* ${uniquePlayers}
+⏰ *Data Updated:* ${new Date(raffleData.lastUpdate).toLocaleTimeString()}
 
 🏆 *Prize Distribution:*
 • Winner Gets: $${winnerPayout} USDC
-• Next Pot: $${winnerPayout} USDC
+• Next Pot Seed: $${winnerPayout} USDC
 
-🌐 *Network Info:*
-• Blockchain: Base Network
-• Token: USDC (Native)
+💳 *Payment Info:*
 • Ticket Price: $5.00 USDC
+• Network: Base (Chain ID: 8453)
+• Token: Native USDC
 
-📈 *Statistics:*
-• Average Pot: $150 USDC
-• Draw Frequency: Hourly
-• Total Payouts: $2,500+ USDC
+📈 *Contract Data:*
+• Raffle: \`${RAFFLE_CONTRACT.slice(0, 10)}...${RAFFLE_CONTRACT.slice(-6)}\`
+• USDC: \`${USDC_CONTRACT.slice(0, 10)}...${USDC_CONTRACT.slice(-6)}\`
 
 🔔 Notifications: ${notificationSubscribers.has(chatId) ? 'ON' : 'OFF'}
 
-*Real-time via Alchemy webhooks*`;
+*Real-time data via Alchemy webhooks & Base blockchain*`;
   
   try {
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
@@ -410,8 +540,18 @@ async function sendStatsMessage(chatId) {
               web_app: { url: DOMAIN }
             },
             {
+              text: '💰 Pot Details',
+              callback_data: 'view_pot'
+            }
+          ],
+          [
+            {
               text: '🔄 Refresh Stats',
-              callback_data: 'view_stats'
+              callback_data: 'refresh_data'
+            },
+            {
+              text: '🔔 Notifications',
+              callback_data: notificationSubscribers.has(chatId) ? 'disable_notifications' : 'enable_notifications'
             }
           ]
         ]
@@ -422,22 +562,67 @@ async function sendStatsMessage(chatId) {
   }
 }
 
+async function sendHelpMessage(chatId) {
+  const helpText = `🤖 *URIM Raffle Bot Help*
+
+*Commands:*
+/start - Launch the raffle app with live data
+/help - Show this help message
+/stats - View real-time statistics  
+/pot - Check current pot balance
+/notify on - Enable live notifications
+/notify off - Disable notifications
+
+*How to Play:*
+1️⃣ Connect your wallet in the app
+2️⃣ Buy tickets with USDC ($5 each)
+3️⃣ Wait for the draw (every hour)
+4️⃣ Win 50% of the pot!
+
+*Live Features:*
+📊 Real-time pot tracking from blockchain
+🔔 Instant notifications on new tickets
+⚡ Live participant count
+🏆 Automatic prize calculations
+
+*Technical:*
+🌐 *Network:* Base (Chain ID: 8453)
+💰 *Contract:* ${RAFFLE_CONTRACT.slice(0, 8)}...
+🪙 *Token:* USDC (Native)
+📡 *Data Source:* Alchemy webhooks
+
+*Testing Mode - @schlegelcrypto*`;
+  
+  try {
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId,
+      text: helpText,
+      parse_mode: 'Markdown'
+    }, { timeout: 10000 });
+  } catch (error) {
+    console.error('Error sending help message:', error);
+  }
+}
+
 async function sendNotificationSettingsMessage(chatId, enabled) {
   const text = enabled 
-    ? `🔔 *Notifications Enabled!*
+    ? `🔔 *Live Notifications Enabled!*
 
-You'll receive updates for:
-• New ticket purchases
-• Pot size increases  
-• Draw results
-• Winner announcements
+You'll receive real-time updates for:
+• 🎫 New ticket purchases
+• 💰 Pot size increases  
+• 🏆 Draw results
+• 🎉 Winner announcements
+• ⚡ Blockchain events
+
+All data is pulled live from Base network!
 
 Use /notify off to disable.`
     : `🔕 *Notifications Disabled*
 
 You will no longer receive raffle updates.
 
-Use /notify on to re-enable notifications.`;
+Use /notify on to re-enable live notifications.`;
   
   try {
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
@@ -453,7 +638,14 @@ Use /notify on to re-enable notifications.`;
 async function sendUnknownCommandMessage(chatId, command) {
   const text = `❓ Unknown command: \`${command}\`
 
-Use /help to see available commands or /start to launch the raffle app.`;
+Available commands:
+• /start - Launch raffle app
+• /stats - Live statistics
+• /pot - Current pot info
+• /notify - Toggle notifications
+• /help - Command list
+
+Or tap /start to launch the raffle app.`;
   
   try {
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
@@ -471,6 +663,8 @@ async function sendErrorMessage(chatId) {
 
 Please try again or use /start to restart the bot.
 
+The blockchain data might be temporarily unavailable.
+
 If the problem persists, contact @schlegelcrypto`;
   
   try {
@@ -484,11 +678,23 @@ If the problem persists, contact @schlegelcrypto`;
   }
 }
 
-// API endpoints
-app.get('/api/raffle-data', (req, res) => {
+// API endpoints with real data
+app.get('/api/raffle-data', async (req, res) => {
+  // Fetch latest data before responding
+  await fetchRealRaffleData();
+  
   res.json({
     success: true,
-    data: raffleData,
+    data: {
+      ...raffleData,
+      winnerPrize: (parseFloat(raffleData.pot) * 0.5).toFixed(2),
+      nextPotSeed: (parseFloat(raffleData.pot) * 0.5).toFixed(2)
+    },
+    contract: {
+      raffle: RAFFLE_CONTRACT,
+      usdc: USDC_CONTRACT,
+      network: 'Base (Chain ID: 8453)'
+    },
     timestamp: Date.now(),
     subscribers: subscribers.size,
     notifications: notificationSubscribers.size
@@ -512,7 +718,9 @@ app.get('/raffle-updates', (req, res) => {
   const heartbeat = setInterval(() => {
     res.write(`data: ${JSON.stringify({ 
       type: 'heartbeat', 
-      timestamp: Date.now() 
+      timestamp: Date.now(),
+      pot: raffleData.pot,
+      participants: raffleData.participants
     })}\n\n`);
   }, 30000);
 
@@ -539,7 +747,8 @@ app.get('/webhook-info', async (req, res) => {
     res.json({
       ...response.data,
       currentDomain: DOMAIN,
-      expectedWebhook: `${DOMAIN}/webhook`
+      expectedWebhook: `${DOMAIN}/webhook`,
+      raffleData: raffleData
     });
   } catch (error) {
     res.status(500).json({ 
@@ -586,12 +795,30 @@ app.get('/test-bot', async (req, res) => {
     res.json({
       bot: response.data,
       webhookConfigured: true,
-      domain: DOMAIN
+      domain: DOMAIN,
+      liveData: raffleData
     });
   } catch (error) {
     res.status(500).json({
       error: error.message,
       domain: DOMAIN
+    });
+  }
+});
+
+// Force data refresh endpoint
+app.get('/refresh-data', async (req, res) => {
+  try {
+    await fetchRealRaffleData();
+    res.json({
+      success: true,
+      data: raffleData,
+      message: 'Data refreshed from blockchain'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });
@@ -616,11 +843,16 @@ app.get('/health', (req, res) => {
       webhookId: ALCHEMY_WEBHOOK_ID,
       signingKey: ALCHEMY_SIGNING_KEY ? 'configured' : 'missing'
     },
-    data: raffleData,
+    contract: {
+      raffle: RAFFLE_CONTRACT,
+      usdc: USDC_CONTRACT
+    },
+    liveData: raffleData,
     subscribers: {
       realtime: subscribers.size,
       notifications: notificationSubscribers.size
-    }
+    },
+    lastDataUpdate: new Date(raffleData.lastUpdate).toISOString()
   });
 });
 
@@ -635,6 +867,8 @@ app.listen(PORT, async () => {
   console.log(`🤖 Bot token: ${BOT_TOKEN ? 'configured ✅' : 'missing ❌'}`);
   console.log(`📡 Telegram webhook: ${DOMAIN}/webhook`);
   console.log(`⚡ Alchemy webhook: ${DOMAIN}/alchemy-webhook`);
+  console.log(`💰 Raffle contract: ${RAFFLE_CONTRACT}`);
+  console.log(`🪙 USDC contract: ${USDC_CONTRACT}`);
   
   // Test bot connection on startup
   try {
@@ -642,8 +876,14 @@ app.listen(PORT, async () => {
       timeout: 10000
     });
     console.log(`✅ Bot connected: @${botInfo.data.result.username}`);
+    
+    // Fetch initial real data
+    console.log('🔄 Fetching initial blockchain data...');
+    await fetchRealRaffleData();
+    console.log(`📊 Initial data: Pot=$${raffleData.pot}, Participants=${raffleData.participants}`);
+    
   } catch (error) {
-    console.error('❌ Failed to connect to bot:', error.message);
+    console.error('❌ Failed to connect to bot or fetch data:', error.message);
   }
 });
 
