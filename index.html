@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>URIM Raffle Bot</title>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="styles.css" />
+    
+    <script type="importmap" async>
+      {
+        "imports": {
+          "react": "https://esm.sh/react@19.1.0",
+          "react-dom/client": "https://esm.sh/react-dom@19.1.0/client",
+          "wagmi": "https://esm.sh/wagmi?deps=@tanstack/react-query@5.74.7",
+          "wagmi/actions": "https://esm.sh/wagmi/actions?deps=@tanstack/react-query@5.74.7",
+          "wagmi/chains": "https://esm.sh/wagmi/chains?deps=@tanstack/react-query@5.74.7",
+          "wagmi/connectors": "https://esm.sh/wagmi/connectors?deps=@tanstack/react-query@5.74.7",
+          "viem": "https://esm.sh/viem",
+          "@tanstack/react-query": "https://esm.sh/@tanstack/react-query@5.74.7"
+        }
+      }
+    </script>
+    
+    <script type="text/babel" data-type="module" src="components/Web3Provider.jsx"></script>
+    <script type="text/babel" data-type="module" src="components/RaffleApp.jsx"></script>
+    <script type="text/babel" data-type="module" src="app.jsx"></script>
+  </head>
+  <body>
+    <div id="renderDiv"></div>
+  </body>
+</html>
