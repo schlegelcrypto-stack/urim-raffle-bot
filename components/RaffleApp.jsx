@@ -60,8 +60,6 @@ function RaffleApp() {
   const [countdown, setCountdown] = useState({ hours: 0, minutes: 0, seconds: 0 });
   const [notification, setNotification] = useState(null);
   const [contractBalance, setContractBalance] = useState(0n);
-  const [realTimePot, setRealTimePot] = useState({ balance: '0', participants: 0, lastUpdate: Date.now() });
-  const [isSubscribed, setIsSubscribed] = useState(false);
 
   const TICKET_PRICE = parseUnits('5', 6); // 5 USDC (6 decimals)
 
@@ -87,17 +85,6 @@ function RaffleApp() {
   const hasApproval = usdcAllowance && usdcAllowance >= TICKET_PRICE;
   const hasBalance = usdcBalance && usdcBalance >= TICKET_PRICE;
 
-  // Fetch real-time pot data from our API
-  const fetchRealTimePot = async () => {
-    try {
-      const response = await fetch('/api/pot');
-      const data = await response.json();
-      setRealTimePot(data);
-    } catch (error) {
-      console.error('Failed to fetch real-time pot:', error);
-    }
-  };
-
   // Fetch contract balance (for pot display)
   const fetchContractBalance = async () => {
     try {
@@ -112,41 +99,12 @@ function RaffleApp() {
     }
   };
 
-  // Subscribe/unsubscribe to notifications
-  const toggleNotifications = async () => {
-    if (!window.Telegram?.WebApp?.initDataUnsafe?.user?.id) return;
-    
-    const chatId = window.Telegram.WebApp.initDataUnsafe.user.id;
-    const endpoint = isSubscribed ? `/api/unsubscribe/${chatId}` : `/api/subscribe/${chatId}`;
-    
-    try {
-      const response = await fetch(endpoint, { method: 'POST' });
-      if (response.ok) {
-        setIsSubscribed(!isSubscribed);
-        showNotification(
-          isSubscribed ? 'Notifications disabled' : 'Live notifications enabled!',
-          'success'
-        );
-      }
-    } catch (error) {
-      console.error('Failed to toggle notifications:', error);
-    }
-  };
-
   // Initialize and set up polling
   useEffect(() => {
     if (isConnected) {
       fetchContractBalance();
-      fetchRealTimePot();
-      
-      // Poll for real-time updates more frequently
-      const balanceInterval = setInterval(fetchRealTimePot, 5000); // Every 5 seconds
-      const contractInterval = setInterval(fetchContractBalance, 30000); // Every 30 seconds
-      
-      return () => {
-        clearInterval(balanceInterval);
-        clearInterval(contractInterval);
-      };
+      const balanceInterval = setInterval(fetchContractBalance, 30000);
+      return () => clearInterval(balanceInterval);
     }
   }, [wagmiConfig, isConnected]);
 
@@ -258,11 +216,10 @@ function RaffleApp() {
       
       showNotification('🎉 Success! Ticket purchased for $5 USDC!', 'success');
       
-      // Refresh balances and pot data
+      // Refresh balances
       refetchBalance();
       refetchAllowance();
       fetchContractBalance();
-      fetchRealTimePot();
       
     } catch (error) {
       console.error('Transaction failed:', error);
@@ -285,15 +242,11 @@ function RaffleApp() {
     }
   };
 
-  // Use real-time pot balance if available, otherwise fall back to contract balance
-  const displayPot = realTimePot.balance !== '0' ? realTimePot.balance : 
-                   contractBalance ? formatUnits(contractBalance, 6) : '0.00';
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900 text-white overflow-hidden">
       {/* Testing Banner */}
       <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-400 text-black text-center py-2 px-4 text-sm font-semibold">
-        Testing Mode - Live Alchemy Tracking - @schlegelcrypto
+        Testing Mode - @schlegelcrypto
       </div>
 
       {/* Notification */}
@@ -336,11 +289,6 @@ function RaffleApp() {
             <div className="absolute top-2 right-2 bg-purple-600 text-white text-xs px-2 py-1 rounded-full">
               ID: 874482516
             </div>
-            {realTimePot.lastUpdate > Date.now() - 30000 && (
-              <div className="absolute top-2 left-2 bg-green-600 text-white text-xs px-2 py-1 rounded-full animate-pulse">
-                ⚡ LIVE
-              </div>
-            )}
           </div>
           <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
             URIM 50/50 Raffle
@@ -348,51 +296,14 @@ function RaffleApp() {
           <p className="text-sm text-gray-300 mt-1">Win big on Base Network with USDC!</p>
         </div>
 
-        {/* Real-time Pot Status */}
-        <div className="glass-card rounded-xl p-6 text-center relative">
-          <div className="absolute top-2 right-2">
-            <button
-              onClick={fetchRealTimePot}
-              className="text-blue-400 hover:text-blue-300 text-xs p-1 rounded"
-              title="Refresh pot data"
-            >
-              🔄
-            </button>
-          </div>
-          <h2 className="text-lg font-semibold text-blue-300 mb-2">🏆 Live Pot Status</h2>
+        {/* Current Pot */}
+        <div className="glass-card rounded-xl p-6 text-center">
+          <h2 className="text-lg font-semibold text-blue-300 mb-2">🏆 Current Pot</h2>
           <div className="text-3xl font-bold text-green-400 mb-1">
-            ${parseFloat(displayPot).toFixed(2)} USDC
+            ${contractBalance ? formatUnits(contractBalance, 6) : '0.00'} USDC
           </div>
-          <div className="text-sm text-gray-400 space-y-1">
-            <div>👥 {realTimePot.participants} participants</div>
-            <div>⚡ Last update: {new Date(realTimePot.lastUpdate).toLocaleTimeString()}</div>
-            <div>Base Network • Powered by Alchemy</div>
-          </div>
-          
-          {realTimePot.participants > 0 && (
-            <div className="mt-3 text-sm text-purple-300">
-              🏆 Winner gets: ${(parseFloat(displayPot) * 0.5).toFixed(2)} USDC
-            </div>
-          )}
-        </div>
-
-        {/* Live Notifications Toggle */}
-        <div className="glass-card rounded-xl p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-purple-300">🔔 Live Notifications</h3>
-              <p className="text-xs text-gray-400">Get instant updates on pot changes</p>
-            </div>
-            <button
-              onClick={toggleNotifications}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
-                isSubscribed 
-                  ? 'bg-green-600 hover:bg-green-700 text-white' 
-                  : 'bg-gray-600 hover:bg-gray-700 text-white'
-              }`}
-            >
-              {isSubscribed ? '✅ ON' : '❌ OFF'}
-            </button>
+          <div className="text-sm text-gray-400">
+            Base Network • Powered by USDC
           </div>
         </div>
 
@@ -549,12 +460,11 @@ function RaffleApp() {
 
         {/* Footer Info */}
         <div className="glass-card rounded-xl p-4 text-center text-sm">
-          <div className="text-gray-400 mb-2">⚡ Real-time Features:</div>
+          <div className="text-gray-400 mb-2">🔮 Features:</div>
           <div className="text-gray-500 space-y-1">
-            <div>• Live pot tracking via Alchemy</div>
-            <div>• Instant transaction notifications</div>
-            <div>• Real-time participant count</div>
-            <div>• 50/50 Prize Split • USDC on Base</div>
+            <div>• USDC Payments on Base</div>
+            <div>• 50/50 Prize Split</div>
+            <div>• Instant Payouts</div>
           </div>
         </div>
 
@@ -562,7 +472,7 @@ function RaffleApp() {
         <div className="text-center text-xs text-gray-500 space-y-1 pb-6">
           <div>Raffle: {RAFFLE_CONTRACT.slice(0, 10)}...{RAFFLE_CONTRACT.slice(-6)}</div>
           <div>USDC: {USDC_CONTRACT.slice(0, 10)}...{USDC_CONTRACT.slice(-6)}</div>
-          <div>Base Network • ID: 874482516 • Powered by Alchemy</div>
+          <div>Base Network • ID: 874482516</div>
         </div>
       </div>
     </div>
