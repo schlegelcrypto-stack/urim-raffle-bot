@@ -1,12 +1,3 @@
-# Check if your app is running
-curl -I https://YOUR_DOMAIN.com
-
-# Test webhook endpoint
-curl -X POST https://YOUR_DOMAIN.com/webhook \
+curl -X POST "https://api.telegram.org/bot8323137830:AAFA3wnduW5_e_GCAOtSRMo0yRTKgYb1B6Y/setWebhook" \
   -H "Content-Type: application/json" \
-  -d '{"message":{"text":"/start","chat":{"id":123},"from":{"id":123}}}'
-
-# View deployment logs (platform-specific)
-vercel logs              # Vercel
-heroku logs --tail       # Heroku
-railway logs             # Railway
+  -d '{"url": "https://your-app-name.herokuapp.com/webhook"}'
