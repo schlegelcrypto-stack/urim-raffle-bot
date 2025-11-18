@@ -57,16 +57,17 @@ app.post('/webhook', async (req, res) => {
       const data = callback_query.data;
       
       console.log(`Callback query from user: ${userId}, data: ${data}`);
-      
+
+      // Handle button callbacks
       if (data === 'view_stats') {
-        await handleViewStats(chatId);
+        await sendStatsMessage(chatId);
       } else if (data === 'share_raffle') {
-        await handleShareRaffle(chatId);
+        await sendShareMessage(chatId);
       } else if (data === 'website') {
-        await handleWebsiteLink(chatId);
+        await sendWebsiteMessage(chatId);
       }
-      
-      // Answer the callback query to remove loading state
+
+      // Answer callback query
       await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
         callback_query_id: callback_query.id
       });
@@ -121,77 +122,27 @@ async function sendWebAppMessage(chatId) {
   }
 }
 
-// Handle view stats callback
-async function handleViewStats(chatId) {
-  const statsMessage = {
+// Function to send stats message
+async function sendStatsMessage(chatId) {
+  const message = {
     chat_id: chatId,
-    text: '📊 *URIM Raffle Stats* 📊\n\n🎰 Current Raffle: #874482516\n💰 Current Pot: Loading...\n🎫 Tickets Sold: Loading...\n⏰ Next Draw: Every hour\n\n🌐 Network: Base\n💎 Token: USDC\n🎯 Ticket Price: $5 USDC',
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [
-        [
-          {
-            text: '🔄 Refresh',
-            callback_data: 'view_stats'
-          },
-          {
-            text: '🎮 Play Now',
-            web_app: {
-              url: DOMAIN
-            }
-          }
-        ]
-      ]
-    }
+    text: '📊 *URIM Raffle Stats*\n\n🎫 Current Raffle ID: 874482516\n💰 Current Pot: Loading...\n🔢 Tickets Sold: Loading...\n⏰ Next Draw: Every hour\n🏆 Win Rate: 50/50 split\n\n*Stats update in real-time in the app!*',
+    parse_mode: 'Markdown'
   };
 
   try {
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, statsMessage);
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
     console.log('Stats message sent successfully');
   } catch (error) {
     console.error('Error sending stats message:', error.response?.data || error.message);
   }
 }
 
-// Handle share raffle callback
-async function handleShareRaffle(chatId) {
-  const shareMessage = {
+// Function to send website message
+async function sendWebsiteMessage(chatId) {
+  const message = {
     chat_id: chatId,
-    text: '📢 *Share URIM Raffle* 📢\n\nInvite your friends to join the 50/50 raffle!\n\n🎰 Copy this message:\n\n"🎰 Join the URIM 50/50 Raffle! Win big on Base Network with USDC! 💰\n\n🎫 $5 USDC per ticket\n🏆 50% goes to winner\n⚡ Instant payouts\n\nJoin now: @URIMRaffleBot"',
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [
-        [
-          {
-            text: '📤 Share in Chat',
-            switch_inline_query: '🎰 Join the URIM 50/50 Raffle! Win big on Base Network! @URIMRaffleBot'
-          }
-        ],
-        [
-          {
-            text: '🎮 Play Now',
-            web_app: {
-              url: DOMAIN
-            }
-          }
-        ]
-      ]
-    }
-  };
-
-  try {
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, shareMessage);
-    console.log('Share message sent successfully');
-  } catch (error) {
-    console.error('Error sending share message:', error.response?.data || error.message);
-  }
-}
-
-// Handle website link callback
-async function handleWebsiteLink(chatId) {
-  const websiteMessage = {
-    chat_id: chatId,
-    text: '🌐 *Visit URIM Website* 🌐\n\nLearn more about URIM raffles and explore our platform!\n\n🔗 Website: urim.live/lottery\n\n💡 Features:\n• Multiple raffle games\n• Detailed statistics\n• Prize history\n• Community updates',
+    text: '🌐 *Visit URIM Website*\n\nLearn more about URIM raffles and other features:\n\n🔗 [urim.live/lottery](https://urim.live/lottery)\n\nDiscover:\n• Multiple raffle types\n• Prize history\n• How it works\n• Community features',
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
@@ -200,13 +151,34 @@ async function handleWebsiteLink(chatId) {
             text: '🌐 Open Website',
             url: 'https://urim.live/lottery'
           }
-        ],
+        ]
+      ]
+    }
+  };
+
+  try {
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
+    console.log('Website message sent successfully');
+  } catch (error) {
+    console.error('Error sending website message:', error.response?.data || error.message);
+  }
+}
+
+// Function to send share message
+async function sendShareMessage(chatId) {
+  const shareText = '🎰 Join the URIM 50/50 Raffle! 💰\n\n🎫 $5 USDC tickets\n🏆 50% to winner\n⚡ Instant payouts on Base\n\nID: 874482516';
+  const shareUrl = `https://t.me/share/url?url=https://t.me/URIMRaffleBot&text=${encodeURIComponent(shareText)}`;
+
+  const message = {
+    chat_id: chatId,
+    text: '📢 *Share URIM Raffle*\n\nSpread the word and invite friends to join the raffle!\n\nThe more players, the bigger the pot! 💰',
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
         [
           {
-            text: '🎮 Play Raffle',
-            web_app: {
-              url: DOMAIN
-            }
+            text: '📤 Share Raffle',
+            url: shareUrl
           }
         ]
       ]
@@ -214,10 +186,10 @@ async function handleWebsiteLink(chatId) {
   };
 
   try {
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, websiteMessage);
-    console.log('Website message sent successfully');
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
+    console.log('Share message sent successfully');
   } catch (error) {
-    console.error('Error sending website message:', error.response?.data || error.message);
+    console.error('Error sending share message:', error.response?.data || error.message);
   }
 }
 

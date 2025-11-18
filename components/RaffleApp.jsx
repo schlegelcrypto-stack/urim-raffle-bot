@@ -60,6 +60,7 @@ function RaffleApp() {
   const [countdown, setCountdown] = useState({ hours: 0, minutes: 0, seconds: 0 });
   const [notification, setNotification] = useState(null);
   const [contractBalance, setContractBalance] = useState(0n);
+  const [imageError, setImageError] = useState(false);
 
   const TICKET_PRICE = parseUnits('5', 6); // 5 USDC (6 decimals)
 
@@ -259,6 +260,39 @@ function RaffleApp() {
     }
   };
 
+  // Handle image error
+  const handleImageError = () => {
+    setImageError(true);
+  };
+
+  // Create fallback SVG
+  const fallbackSVG = (
+    <svg 
+      className="w-full max-w-sm mx-auto rounded-xl shadow-2xl animate-pulse-glow"
+      viewBox="0 0 400 300" 
+      fill="none" 
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <rect width="400" height="300" rx="12" fill="url(#gradient)"/>
+      <text x="200" y="130" fontFamily="Arial, sans-serif" fontSize="36" fontWeight="bold" fill="white" textAnchor="middle">
+        URIM
+      </text>
+      <text x="200" y="170" fontFamily="Arial, sans-serif" fontSize="18" fill="#E2E8F0" textAnchor="middle">
+        50/50 Raffle
+      </text>
+      <text x="200" y="210" fontFamily="Arial, sans-serif" fontSize="14" fill="#94A3B8" textAnchor="middle">
+        ID: 874482516
+      </text>
+      <defs>
+        <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#6366F1"/>
+          <stop offset="50%" stopColor="#8B5CF6"/>
+          <stop offset="100%" stopColor="#3B82F6"/>
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900 text-white overflow-hidden">
       {/* Notification */}
@@ -275,11 +309,16 @@ function RaffleApp() {
         {/* Header with Artwork */}
         <div className="text-center pt-6 pb-4">
           <div className="relative mb-4">
-            <img 
-              src="https://www.infinityg.ai/assets/user-upload/1763444371347-1723df0c-8fbf-4fa3-9dda-241ca90a93cd.jpg"
-              alt="URIM 5050 Raffle"
-              className="w-full max-w-sm mx-auto rounded-xl shadow-2xl animate-pulse-glow"
-            />
+            {!imageError ? (
+              <img 
+                src="https://i.imgur.com/FxI9YIo.jpg"
+                alt="URIM 5050 Raffle"
+                className="w-full max-w-sm mx-auto rounded-xl shadow-2xl animate-pulse-glow"
+                onError={handleImageError}
+              />
+            ) : (
+              fallbackSVG
+            )}
             <div className="absolute top-2 right-2 bg-purple-600 text-white text-xs px-2 py-1 rounded-full">
               ID: 874482516
             </div>
@@ -369,19 +408,6 @@ function RaffleApp() {
               <div className="text-xs text-gray-500 mt-1">
                 Ticket price: 5.00 USDC
               </div>
-            </div>
-
-            {/* Website Link */}
-            <div className="glass-card rounded-xl p-4 text-center">
-              <a 
-                href="https://urim.live/lottery" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-blue-400 hover:text-blue-300 underline font-medium"
-              >
-                🌐 Visit urim.live/lottery
-              </a>
-              <p className="text-sm text-gray-400 mt-1">Learn more about URIM raffles</p>
             </div>
 
             {/* Ticket Purchase */}
