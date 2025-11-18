@@ -1,0 +1,30 @@
+Write-Host "🤖 Setting up Telegram webhook for URIM Raffle Bot..." -ForegroundColor Cyan
+Write-Host ""
+
+$BOT_TOKEN = "8323137830:AAFA3wnduW5_e_GCAOtSRMo0yRTKgYb1B6Y"
+$WEBHOOK_URL = "https://urim-raffle-bot.vercel.app/webhook"
+
+Write-Host "Bot Token: $BOT_TOKEN" -ForegroundColor Yellow
+Write-Host "Webhook URL: $WEBHOOK_URL" -ForegroundColor Yellow
+Write-Host ""
+
+Write-Host "🔗 Setting webhook..." -ForegroundColor Green
+try {
+    $response = Invoke-RestMethod -Uri "https://api.telegram.org/bot$BOT_TOKEN/setWebhook?url=$WEBHOOK_URL" -Method Post
+    Write-Host "Response: $($response | ConvertTo-Json)" -ForegroundColor Green
+} catch {
+    Write-Host "Error setting webhook: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Write-Host ""
+Write-Host "📊 Checking webhook status..." -ForegroundColor Green
+try {
+    $status = Invoke-RestMethod -Uri "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo" -Method Get
+    Write-Host "Webhook Status: $($status | ConvertTo-Json -Depth 3)" -ForegroundColor Green
+} catch {
+    Write-Host "Error checking webhook: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Write-Host ""
+Write-Host "✅ Done! Test your bot by sending /start to @URIMRaffleBot" -ForegroundColor Cyan
+Read-Host "Press Enter to exit"
