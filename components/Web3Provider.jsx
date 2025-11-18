@@ -5,16 +5,16 @@ import { walletConnect, injected, coinbaseWallet } from 'wagmi/connectors';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider } from 'wagmi';
 
-// Create Wagmi config
+// Create Wagmi config with your specific WalletConnect project ID
 const config = createConfig({
   chains: [base],
   connectors: [
     injected({ shimDisconnect: true }),
     walletConnect({
-      projectId: 'a01e2fcf9bbbc56ba32ea708ccd5bb5a',
+      projectId: 'eac2fc87c235ce36192f197cd1c255f3',
       metadata: {
         name: 'URIM 50/50 Raffle',
-        description: 'Win big with URIM 50/50 Raffle on Base',
+        description: 'Win big with URIM 50/50 Raffle on Base using USDC',
         url: 'https://urim.live',
         icons: ['https://i.imgur.com/0v5f4rK.png']
       },
