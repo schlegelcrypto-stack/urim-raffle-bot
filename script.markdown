@@ -1,15 +1,23 @@
-# 🚀 URIM Raffle Bot - Webhook Setup Guide
+# 🚀 URIM Raffle Bot Deployment Guide
 
-## Quick Setup Options
+Complete step-by-step guide to deploy your URIM 50/50 Raffle Telegram Bot to production.
 
-### Option 1: Browser Method (Easiest)
-1. Copy this URL: `https://api.telegram.org/bot8323137830:AAFA3wnduW5_e_GCAOtSRMo0yRTKgYb1B6Y/setWebhook?url=https://urim-raffle-bot.vercel.app/webhook`
-2. Paste it in your web browser
-3. Press Enter
-4. You should see: `{"ok":true,"result":true,"description":"Webhook was set"}`
+## 📋 Prerequisites
 
-### Option 2: Run Script Files
+- Node.js 18+ installed
+- Git installed
+- Telegram Bot Token: `8323137830:AAFA3wnduW5_e_GCAOtSRMo0yRTKgYb1B6Y`
+- Bot Username: `@URIMRaffleBot`
 
-#### Windows (.bat):
+---
+
+## 🔧 Local Development Setup
+
+### 1. Clone & Install
 ```bash
-setup-webhook.bat
+# Clone your repository
+git clone <your-repo-url>
+cd urim-raffle-bot
+
+# Install dependencies
+npm install

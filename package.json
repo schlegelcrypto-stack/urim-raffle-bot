@@ -7,10 +7,19 @@
     "start": "node server.js",
     "dev": "node server.js"
   },
-  "dependencies": {
-    "express": "^4.18.2"
-  },
   "engines": {
     "node": ">=18.0.0"
-  }
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0"
+  },
+  "keywords": [
+    "telegram-bot",
+    "raffle",
+    "web3",
+    "base-network"
+  ],
+  "author": "URIM Team",
+  "license": "MIT"
 }
