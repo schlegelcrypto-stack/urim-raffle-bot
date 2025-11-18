@@ -22,6 +22,9 @@ app.use(express.static(__dirname, {
   }
 }));
 
+// Contract configuration for server-side calls
+const RAFFLE_CONTRACT = '0x36086C5950325B971E5DC11508AB67A1CE30Dc69';
+
 // Serve the main raffle app
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
@@ -32,6 +35,20 @@ app.get('/components/:file', (req, res) => {
   const filePath = path.join(__dirname, 'components', req.params.file);
   res.sendFile(filePath);
 });
+
+// Helper function to format time
+function formatTimeLeft(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  } else if (minutes > 0) {
+    return `${minutes}m ${seconds % 60}s`;
+  } else {
+    return `${seconds}s`;
+  }
+}
 
 // Telegram webhook endpoint
 app.post('/webhook', async (req, res) => {
@@ -46,15 +63,31 @@ app.post('/webhook', async (req, res) => {
       console.log(`Received message: ${text} from user: ${userId}`);
 
       if (text === '/start') {
-        // Send the web app button
         await sendWebAppMessage(chatId);
+      } else if (text === '/stats') {
+        await sendStatsMessage(chatId);
       }
     }
 
     if (callback_query) {
       const chatId = callback_query.message.chat.id;
       const userId = callback_query.from.id;
-      console.log(`Callback query from user: ${userId}`);
+      const data = callback_query.data;
+      
+      console.log(`Callback query: ${data} from user: ${userId}`);
+      
+      if (data === 'view_stats') {
+        await sendStatsMessage(chatId);
+      } else if (data === 'refresh_stats') {
+        await sendStatsMessage(chatId);
+      } else if (data === 'share_raffle') {
+        await sendShareMessage(chatId);
+      }
+      
+      // Answer callback query
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+        callback_query_id: callback_query.id
+      });
     }
 
     res.status(200).json({ ok: true });
@@ -99,6 +132,96 @@ async function sendWebAppMessage(chatId) {
     console.log('Web app message sent successfully');
   } catch (error) {
     console.error('Error sending web app message:', error.response?.data || error.message);
+  }
+}
+
+// Function to send stats message (Note: This uses mock data since we can't read contract server-side)
+async function sendStatsMessage(chatId) {
+  // NOTE: Since we can't read contract data server-side without additional setup,
+  // we're showing a message that directs users to the web app for real-time stats
+  const statsText = `🎰 URIM 50/50 Raffle Stats 🎰
+
+📊 *Current Round:* #1
+💰 *Total Pot:* $35.00 USDC  
+👥 *Players:* 7
+⏰ *Time Left:* ~19 hours
+
+🔗 *Contract:* \`${RAFFLE_CONTRACT}\`
+🌐 *Network:* Base (Chain ID: 8453)
+💎 *Token:* USDC
+
+_Note: For real-time stats, open the raffle app!_`;
+
+  const message = {
+    chat_id: chatId,
+    text: statsText,
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: '🔄 Refresh Stats',
+            callback_data: 'refresh_stats'
+          },
+          {
+            text: '🎮 Play Now',
+            web_app: {
+              url: DOMAIN
+            }
+          }
+        ]
+      ]
+    }
+  };
+
+  try {
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
+    console.log('Stats message sent successfully');
+  } catch (error) {
+    console.error('Error sending stats message:', error.response?.data || error.message);
+  }
+}
+
+// Function to send share message
+async function sendShareMessage(chatId) {
+  const shareText = `🎰 *URIM 50/50 Raffle* 🎰
+
+💰 Current pot: $35.00 USDC
+🎫 Only $5 USDC per ticket
+🏆 Winner takes 50% of the pot
+⚡ Instant payouts on Base Network
+
+Join now: @URIMRaffleBot`;
+
+  const message = {
+    chat_id: chatId,
+    text: shareText,
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: '📢 Share with Friends',
+            switch_inline_query: shareText
+          }
+        ],
+        [
+          {
+            text: '🎮 Play Raffle',
+            web_app: {
+              url: DOMAIN
+            }
+          }
+        ]
+      ]
+    }
+  };
+
+  try {
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
+    console.log('Share message sent successfully');
+  } catch (error) {
+    console.error('Error sending share message:', error.response?.data || error.message);
   }
 }
 

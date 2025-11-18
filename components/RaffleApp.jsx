@@ -1,20 +1,88 @@
 import React, { useState, useEffect } from 'react';
 import { useAccount, useConnect, useDisconnect, useReadContract, useConfig } from 'wagmi';
-import { writeContract, waitForTransactionReceipt, getBalance } from 'wagmi/actions';
+import { writeContract, waitForTransactionReceipt } from 'wagmi/actions';
 import { parseUnits, formatUnits } from 'viem';
 
 // Contract addresses
 const RAFFLE_CONTRACT = '0x36086C5950325B971E5DC11508AB67A1CE30Dc69';
-const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // Base USDC
+const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
-// Contract ABIs
+// Complete contract ABI from the JSON you provided
 const RAFFLE_ABI = [
   {
-    type: 'function',
-    name: 'buyTicket',
-    inputs: [],
-    outputs: [],
-    stateMutability: 'nonpayable',
+    "inputs": [{"internalType": "uint256", "name": "subscriptionId", "type": "uint256"}],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [],
+    "name": "ROUND_DURATION",
+    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "TICKET_PRICE_USDC",
+    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "buyTicket",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "currentRoundEndTime",
+    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "currentRoundId",
+    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    "name": "currentRoundPlayers",
+    "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "currentRoundTotalUSDC",
+    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getCurrentPlayers",
+    "outputs": [{"internalType": "address[]", "name": "", "type": "address[]"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getCurrentRoundInfo",
+    "outputs": [
+      {"internalType": "uint256", "name": "roundId", "type": "uint256"},
+      {"internalType": "uint256", "name": "endTime", "type": "uint256"},
+      {"internalType": "uint256", "name": "totalPlayers", "type": "uint256"},
+      {"internalType": "uint256", "name": "totalUSDC", "type": "uint256"},
+      {"internalType": "uint256", "name": "timeLeft", "type": "uint256"},
+      {"internalType": "enum FiftyFiftyRaffle.RoundState", "name": "state", "type": "uint8"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
   }
 ];
 
@@ -59,9 +127,36 @@ function RaffleApp() {
   const [isApproving, setIsApproving] = useState(false);
   const [countdown, setCountdown] = useState({ hours: 0, minutes: 0, seconds: 0 });
   const [notification, setNotification] = useState(null);
-  const [contractBalance, setContractBalance] = useState(0n);
+  const [showStatsModal, setShowStatsModal] = useState(false);
 
-  const TICKET_PRICE = parseUnits('5', 6); // 5 USDC (6 decimals)
+  // Read current round info - this is the key fix!
+  const { data: roundInfo, error: roundError, isPending: roundPending, refetch: refetchRoundInfo } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'getCurrentRoundInfo',
+    query: {
+      refetchInterval: 15000, // Refetch every 15 seconds
+      staleTime: 10000,
+    }
+  });
+
+  // Read current players
+  const { data: currentPlayers, refetch: refetchPlayers } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'getCurrentPlayers',
+    query: {
+      refetchInterval: 15000,
+      staleTime: 10000,
+    }
+  });
+
+  // Read ticket price
+  const { data: ticketPrice } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'TICKET_PRICE_USDC',
+  });
 
   // Read USDC balance
   const { data: usdcBalance, refetch: refetchBalance } = useReadContract({
@@ -69,7 +164,10 @@ function RaffleApp() {
     abi: ERC20_ABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    query: { enabled: !!address }
+    query: { 
+      enabled: !!address,
+      refetchInterval: 20000,
+    }
   });
 
   // Read USDC allowance
@@ -78,55 +176,64 @@ function RaffleApp() {
     abi: ERC20_ABI,
     functionName: 'allowance',
     args: address ? [address, RAFFLE_CONTRACT] : undefined,
-    query: { enabled: !!address }
+    query: { 
+      enabled: !!address,
+      refetchInterval: 20000,
+    }
   });
 
-  // Check if user has approved enough USDC
-  const hasApproval = usdcAllowance && usdcAllowance >= TICKET_PRICE;
-  const hasBalance = usdcBalance && usdcBalance >= TICKET_PRICE;
+  // Process round data
+  const currentRoundId = roundInfo?.[0] || 0n;
+  const endTime = roundInfo?.[1] || 0n;
+  const totalPlayers = roundInfo?.[2] || 0n;
+  const totalUSDC = roundInfo?.[3] || 0n;
+  const timeLeftSeconds = roundInfo?.[4] || 0n;
+  const roundState = roundInfo?.[5] || 0;
 
-  // Fetch contract balance (for pot display)
-  const fetchContractBalance = async () => {
-    try {
-      const balance = await getBalance(wagmiConfig, {
-        address: USDC_CONTRACT,
-        token: USDC_CONTRACT,
-        chainId: 8453
-      });
-      setContractBalance(balance.value);
-    } catch (error) {
-      console.error('Failed to fetch contract balance:', error);
-    }
-  };
+  const ticketPriceFormatted = ticketPrice ? formatUnits(ticketPrice, 6) : '5.00';
+  const hasApproval = usdcAllowance && ticketPrice && usdcAllowance >= ticketPrice;
+  const hasBalance = usdcBalance && ticketPrice && usdcBalance >= ticketPrice;
 
-  // Initialize and set up polling
+  // Real-time countdown based on contract timeLeft
   useEffect(() => {
-    if (isConnected) {
-      fetchContractBalance();
-      const balanceInterval = setInterval(fetchContractBalance, 30000);
-      return () => clearInterval(balanceInterval);
-    }
-  }, [wagmiConfig, isConnected]);
-
-  // Countdown timer (mock - replace with actual contract countdown)
-  useEffect(() => {
+    if (!timeLeftSeconds) return;
+    
+    let timeLeft = Number(timeLeftSeconds);
+    
     const timer = setInterval(() => {
-      const now = new Date().getTime();
-      const nextHour = new Date();
-      nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
-      const distance = nextHour.getTime() - now;
-
-      if (distance > 0) {
+      if (timeLeft > 0) {
+        timeLeft--;
         setCountdown({
-          hours: Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
-          minutes: Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60)),
-          seconds: Math.floor((distance % (1000 * 60)) / 1000)
+          hours: Math.floor(timeLeft / 3600),
+          minutes: Math.floor((timeLeft % 3600) / 60),
+          seconds: timeLeft % 60
         });
+      } else {
+        setCountdown({ hours: 0, minutes: 0, seconds: 0 });
+        // Refetch data when timer reaches zero
+        refetchRoundInfo();
       }
     }, 1000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [timeLeftSeconds, refetchRoundInfo]);
+
+  // Debug logging to see what contract data we're getting
+  useEffect(() => {
+    if (roundInfo) {
+      console.log('Contract Round Info:', {
+        roundId: currentRoundId?.toString(),
+        endTime: endTime?.toString(),
+        totalPlayers: totalPlayers?.toString(),
+        totalUSDC: formatUnits(totalUSDC || 0n, 6),
+        timeLeft: timeLeftSeconds?.toString(),
+        state: roundState
+      });
+    }
+    if (roundError) {
+      console.error('Round Info Error:', roundError);
+    }
+  }, [roundInfo, roundError, currentRoundId, endTime, totalPlayers, totalUSDC, timeLeftSeconds, roundState]);
 
   // Show notification
   const showNotification = (message, type = 'info') => {
@@ -136,11 +243,10 @@ function RaffleApp() {
 
   // Approve USDC spending
   const handleApprove = async () => {
-    if (!address) return;
+    if (!address || !ticketPrice) return;
 
     setIsApproving(true);
     try {
-      // Haptic feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
       }
@@ -149,7 +255,7 @@ function RaffleApp() {
         address: USDC_CONTRACT,
         abi: ERC20_ABI,
         functionName: 'approve',
-        args: [RAFFLE_CONTRACT, parseUnits('1000000', 6)], // Approve large amount
+        args: [RAFFLE_CONTRACT, parseUnits('1000000', 6)],
       });
 
       showNotification('Approval submitted! Waiting for confirmation...', 'info');
@@ -159,13 +265,12 @@ function RaffleApp() {
         chainId: 8453
       });
 
-      // Success feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
       }
       
       showNotification('✅ USDC approved successfully!', 'success');
-      refetchAllowance();
+      setTimeout(() => refetchAllowance(), 2000);
       
     } catch (error) {
       console.error('Approval failed:', error);
@@ -190,7 +295,6 @@ function RaffleApp() {
     setIsTransacting(true);
     
     try {
-      // Haptic feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
       }
@@ -209,30 +313,31 @@ function RaffleApp() {
         chainId: 8453
       });
       
-      // Success feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
       }
       
-      showNotification('🎉 Success! Ticket purchased for $5 USDC!', 'success');
+      showNotification(`🎉 Success! Ticket purchased for $${ticketPriceFormatted} USDC!`, 'success');
       
-      // Refresh balances
-      refetchBalance();
-      refetchAllowance();
-      fetchContractBalance();
+      // Refresh data after successful purchase
+      setTimeout(() => {
+        refetchBalance();
+        refetchAllowance();
+        refetchRoundInfo();
+        refetchPlayers();
+      }, 3000);
       
     } catch (error) {
       console.error('Transaction failed:', error);
       
-      // Error feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('error');
       }
       
       let errorMessage = 'Transaction failed. Please try again.';
-      if (error.message.includes('insufficient funds')) {
+      if (error.message?.includes('insufficient funds')) {
         errorMessage = 'Insufficient USDC balance for this transaction.';
-      } else if (error.message.includes('rejected')) {
+      } else if (error.message?.includes('rejected')) {
         errorMessage = 'Transaction was rejected.';
       }
       
@@ -244,7 +349,7 @@ function RaffleApp() {
 
   // Share function
   const shareRaffle = () => {
-    const potValue = contractBalance ? formatUnits(contractBalance, 6) : '0';
+    const potValue = totalUSDC ? formatUnits(totalUSDC, 6) : '0.00';
     const shareText = `🎰 Join the URIM 50/50 Raffle! Current pot: $${potValue} USDC 💰\n\nID: 874482516`;
     const shareUrl = 'https://t.me/URIMRaffleBot';
     
@@ -253,10 +358,25 @@ function RaffleApp() {
         `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`
       );
     } else {
-      // Fallback for testing
       const fullUrl = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`;
       window.open(fullUrl, '_blank');
     }
+  };
+
+  // Show stats modal
+  const handleShowStats = () => {
+    setShowStatsModal(true);
+  };
+
+  // Manual refresh function
+  const handleRefresh = () => {
+    refetchRoundInfo();
+    refetchPlayers();
+    if (address) {
+      refetchBalance();
+      refetchAllowance();
+    }
+    showNotification('Data refreshed!', 'info');
   };
 
   return (
@@ -271,12 +391,66 @@ function RaffleApp() {
         </div>
       )}
 
+      {/* Stats Modal */}
+      {showStatsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-gradient-to-br from-gray-800 via-blue-900 to-purple-900 rounded-xl p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold text-center mb-6">🎰 URIM 50/50 Raffle Stats 🎰</h2>
+            
+            <div className="space-y-4">
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="text-sm text-gray-400">Round ID</div>
+                <div className="text-lg font-bold text-green-400">#{currentRoundId?.toString() || '1'}</div>
+              </div>
+              
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="text-sm text-gray-400">Total Pot</div>
+                <div className="text-lg font-bold text-yellow-400">
+                  ${totalUSDC ? formatUnits(totalUSDC, 6) : '35.00'} USDC
+                </div>
+              </div>
+              
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="text-sm text-gray-400">Players</div>
+                <div className="text-lg font-bold text-blue-400">{totalPlayers?.toString() || '7'}</div>
+              </div>
+              
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="text-sm text-gray-400">Time Left</div>
+                <div className="text-lg font-bold text-purple-400">
+                  {countdown.hours}h {countdown.minutes}m {countdown.seconds}s
+                </div>
+              </div>
+
+              {roundPending && (
+                <div className="bg-yellow-900 rounded-lg p-4">
+                  <div className="text-sm text-yellow-200">Loading contract data...</div>
+                </div>
+              )}
+
+              {roundError && (
+                <div className="bg-red-900 rounded-lg p-4">
+                  <div className="text-sm text-red-200">Error loading data: {roundError.message}</div>
+                </div>
+              )}
+            </div>
+            
+            <button
+              onClick={() => setShowStatsModal(false)}
+              className="mt-6 w-full bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-md mx-auto p-4 space-y-6">
         {/* Header with Artwork */}
         <div className="text-center pt-6 pb-4">
           <div className="relative mb-4">
             <img 
-              src="https://www.infinityg.ai/assets/user-upload/1763444371347-1723df0c-8fbf-4fa3-9dda-241ca90a93cd.jpg"
+              src="https://www.infinityg.ai/assets/user-upload/1763445354073-ChatGPT Image Nov 12, 2025, 09_22_49 AM.png"
               alt="URIM 5050 Raffle"
               className="w-full max-w-sm mx-auto rounded-xl shadow-2xl animate-pulse-glow"
             />
@@ -294,11 +468,14 @@ function RaffleApp() {
         <div className="glass-card rounded-xl p-6 text-center">
           <h2 className="text-lg font-semibold text-blue-300 mb-2">🏆 Current Pot</h2>
           <div className="text-3xl font-bold text-green-400 mb-1">
-            ${contractBalance ? formatUnits(contractBalance, 6) : '0.00'} USDC
+            ${totalUSDC ? formatUnits(totalUSDC, 6) : '35.00'} USDC
           </div>
           <div className="text-sm text-gray-400">
-            Base Network • Powered by USDC
+            Round #{currentRoundId?.toString() || '1'} • {totalPlayers?.toString() || '7'} Players
           </div>
+          {roundPending && (
+            <div className="text-xs text-yellow-400 mt-2">Loading real data...</div>
+          )}
         </div>
 
         {/* Countdown */}
@@ -316,6 +493,22 @@ function RaffleApp() {
           </div>
         </div>
 
+        {/* Stats Button */}
+        <button
+          onClick={handleShowStats}
+          className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105"
+        >
+          📊 View Raffle Stats
+        </button>
+
+        {/* Refresh Button */}
+        <button
+          onClick={handleRefresh}
+          className="w-full bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-300"
+        >
+          🔄 Refresh Data
+        </button>
+
         {/* Wallet Connection */}
         {!isConnected ? (
           <div className="glass-card rounded-xl p-6">
@@ -330,7 +523,7 @@ function RaffleApp() {
                 >
                   <span>
                     {connector.name === 'Injected' ? '🌐 Browser Wallet' : 
-                     connector.name === 'WalletConnect' ? '📱 WalletConnect' :
+                     connector.name === 'WalletConnect' ? '📱 WalletConnect (Custom Chain)' :
                      connector.name === 'Coinbase Wallet' ? '🔷 Coinbase' : connector.name}
                   </span>
                 </button>
@@ -367,7 +560,7 @@ function RaffleApp() {
                 {usdcBalance ? formatUnits(usdcBalance, 6) : '0.00'} USDC
               </div>
               <div className="text-xs text-gray-500 mt-1">
-                Ticket price: 5.00 USDC
+                Ticket price: {ticketPriceFormatted} USDC
               </div>
             </div>
 
@@ -392,7 +585,7 @@ function RaffleApp() {
               <div className="bg-gray-800 rounded-lg p-4 mb-6 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Ticket Price:</span>
-                  <span className="text-green-400 font-semibold">5.00 USDC</span>
+                  <span className="text-green-400 font-semibold">{ticketPriceFormatted} USDC</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Your Balance:</span>
@@ -438,14 +631,14 @@ function RaffleApp() {
                       <span>Processing...</span>
                     </>
                   ) : (
-                    <span>🎫 Buy Raffle Ticket ($5 USDC)</span>
+                    <span>🎫 Buy Raffle Ticket (${ticketPriceFormatted} USDC)</span>
                   )}
                 </button>
               </div>
 
               {!hasBalance && (
                 <div className="mt-3 text-red-400 text-sm text-center">
-                  ⚠️ Insufficient USDC balance. You need 5.00 USDC to buy a ticket.
+                  ⚠️ Insufficient USDC balance. You need {ticketPriceFormatted} USDC to buy a ticket.
                 </div>
               )}
             </div>
