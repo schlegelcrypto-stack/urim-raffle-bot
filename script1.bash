@@ -1,5 +1,3 @@
-# Start the development server
-npm start
-
-# Your Mini App will be available at: http://localhost:3000
-# Bot will start polling for messages
+# Add custom domain in Vercel dashboard
+# Or via CLI:
+vercel domains add raffle.urim.live

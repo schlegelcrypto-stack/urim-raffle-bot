@@ -8,8 +8,17 @@
   ],
   "routes": [
     {
+      "src": "/(.*\\.(js|jsx|css|html|png|jpg|gif|svg))",
+      "dest": "/$1"
+    },
+    {
       "src": "/(.*)",
       "dest": "/server.js"
     }
-  ]
+  ],
+  "functions": {
+    "server.js": {
+      "maxDuration": 30
+    }
+  }
 }

@@ -1,20 +1,19 @@
-# 🚀 URIM Raffle Bot Complete Deployment Guide
+# 🎰 URIM 50/50 Raffle Bot
 
-## 📋 Prerequisites
+A fully functional Telegram bot with Mini App for running 50/50 raffles on Base network.
 
-Before you start, ensure you have:
-- ✅ Node.js (v16 or higher) installed
-- ✅ Git installed
-- ✅ Your Telegram bot token: `8323137830:AAFA3wnduW5_e_GCAOtSRMo0yRTKgYb1B6Y`
-- ✅ A hosting platform account (Vercel recommended, but also covers Heroku & Railway)
-- ✅ Your Base contract deployed at: `0x36086C5950325B971E5DC11508AB67A1CE30Dc69`
+## 🚀 Features
 
----
+- **Real Telegram Bot** with animated logo welcome
+- **Mini App Integration** with WalletConnect v2
+- **Base Network** contract interaction 
+- **Chainlink Price Feeds** for accurate $5 USD tickets
+- **No Custody** - 100% on-chain transactions
+- **Real-time Updates** - Live pot tracking & countdown
 
-## 🏠 Part 1: Local Testing Setup
+## 🛠️ Quick Setup
 
-### Step 1: Install Dependencies
+### 1. Local Development
 ```bash
-# Clone or download your project files to a folder
-cd your-project-folder
 npm install
+npm start
