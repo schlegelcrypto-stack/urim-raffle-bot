@@ -1,28 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useAccount, useConnect, useDisconnect, useReadContract, useConfig } from 'wagmi';
-import { writeContract, waitForTransactionReceipt, readContract } from 'wagmi/actions';
-import { parseUnits, formatUnits, parseSignature } from 'viem';
+import { writeContract, waitForTransactionReceipt } from 'wagmi/actions';
+import { parseUnits, formatUnits } from 'viem';
 
 // Contract addresses
 const RAFFLE_CONTRACT = '0x36086C5950325B971E5DC11508AB67A1CE30Dc69';
-const LOTTERY_CONTRACT = '0xFC448fF766bC5d4d01cF0d15cb20f5aA2400A3DA';
-const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-const PERMIT2_CONTRACT = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // Base USDC
 
-// Contract ABIs
+// Contract ABIs - Using the actual contract ABI you provided
 const RAFFLE_ABI = [
-  {
-    type: 'function',
-    name: 'buyTicketWithPermit2',
-    inputs: [
-      { name: 'amount', type: 'uint256' },
-      { name: 'nonce', type: 'uint256' },
-      { name: 'deadline', type: 'uint256' },
-      { name: 'signature', type: 'bytes' }
-    ],
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
   {
     type: 'function',
     name: 'currentRoundId',
@@ -39,20 +25,45 @@ const RAFFLE_ABI = [
   },
   {
     type: 'function',
-    name: 'currentRoundPlayers',
-    inputs: [],
-    outputs: [{ name: '', type: 'uint256' }],
-    stateMutability: 'view',
-  }
-];
-
-const LOTTERY_ABI = [
-  {
-    type: 'function',
     name: 'currentRoundTotalUSDC',
     inputs: [],
     outputs: [{ name: '', type: 'uint256' }],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'getCurrentPlayers',
+    inputs: [],
+    outputs: [{ name: '', type: 'address[]' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'getCurrentRoundInfo',
+    inputs: [],
+    outputs: [
+      { name: 'roundId', type: 'uint256' },
+      { name: 'endTime', type: 'uint256' },
+      { name: 'totalPlayers', type: 'uint256' },
+      { name: 'totalUSDC', type: 'uint256' },
+      { name: 'timeLeft', type: 'uint256' },
+      { name: 'state', type: 'uint8' }
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'TICKET_PRICE_USDC',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'buyTicket',
+    inputs: [],
+    outputs: [],
+    stateMutability: 'nonpayable',
   }
 ];
 
@@ -86,24 +97,6 @@ const ERC20_ABI = [
   }
 ];
 
-const PERMIT2_ABI = [
-  {
-    type: 'function',
-    name: 'allowance',
-    inputs: [
-      { name: 'user', type: 'address' },
-      { name: 'token', type: 'address' },
-      { name: 'spender', type: 'address' }
-    ],
-    outputs: [
-      { name: 'amount', type: 'uint160' },
-      { name: 'expiration', type: 'uint48' },
-      { name: 'nonce', type: 'uint48' }
-    ],
-    stateMutability: 'view',
-  }
-];
-
 function RaffleApp() {
   const { address, isConnected } = useAccount();
   const { connect, connectors, error: connectError } = useConnect();
@@ -117,7 +110,28 @@ function RaffleApp() {
   const [notification, setNotification] = useState(null);
   const [showStats, setShowStats] = useState(false);
 
-  const TICKET_PRICE = parseUnits('5', 6); // 5 USDC (6 decimals)
+  // Read ticket price from contract
+  const { data: ticketPriceUSDC } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'TICKET_PRICE_USDC',
+  });
+
+  // Read current round info
+  const { data: roundInfo, refetch: refetchRoundInfo } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'getCurrentRoundInfo',
+    query: { refetchInterval: 30000 }
+  });
+
+  // Read current players
+  const { data: currentPlayers, refetch: refetchPlayers } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'getCurrentPlayers',
+    query: { refetchInterval: 30000 }
+  });
 
   // Read USDC balance
   const { data: usdcBalance, refetch: refetchBalance } = useReadContract({
@@ -125,60 +139,38 @@ function RaffleApp() {
     abi: ERC20_ABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    query: { enabled: !!address, refetchInterval: 30000 }
+    query: { enabled: !!address }
   });
 
-  // Read USDC allowance to Permit2
-  const { data: permit2Allowance, refetch: refetchPermit2Allowance } = useReadContract({
+  // Read USDC allowance for raffle contract
+  const { data: usdcAllowance, refetch: refetchAllowance } = useReadContract({
     address: USDC_CONTRACT,
     abi: ERC20_ABI,
     functionName: 'allowance',
-    args: address ? [address, PERMIT2_CONTRACT] : undefined,
-    query: { enabled: !!address, refetchInterval: 30000 }
+    args: address ? [address, RAFFLE_CONTRACT] : undefined,
+    query: { enabled: !!address }
   });
 
-  // Read raffle contract stats
-  const { data: currentRoundId, refetch: refetchRoundId } = useReadContract({
-    address: RAFFLE_CONTRACT,
-    abi: RAFFLE_ABI,
-    functionName: 'currentRoundId',
-    query: { refetchInterval: 30000 }
-  });
+  // Extract round info
+  const roundId = roundInfo?.[0];
+  const endTime = roundInfo?.[1];
+  const totalPlayers = roundInfo?.[2];
+  const totalUSDC = roundInfo?.[3];
+  const timeLeft = roundInfo?.[4];
+  const roundState = roundInfo?.[5];
 
-  const { data: currentRoundEndTime, refetch: refetchEndTime } = useReadContract({
-    address: RAFFLE_CONTRACT,
-    abi: RAFFLE_ABI,
-    functionName: 'currentRoundEndTime',
-    query: { refetchInterval: 30000 }
-  });
+  const playerCount = currentPlayers?.length || Number(totalPlayers) || 0;
+  const hasBalance = usdcBalance && ticketPriceUSDC && usdcBalance >= ticketPriceUSDC;
+  const hasAllowance = usdcAllowance && ticketPriceUSDC && usdcAllowance >= ticketPriceUSDC;
 
-  const { data: currentRoundPlayers, refetch: refetchPlayers } = useReadContract({
-    address: RAFFLE_CONTRACT,
-    abi: RAFFLE_ABI,
-    functionName: 'currentRoundPlayers',
-    query: { refetchInterval: 30000 }
-  });
-
-  // Read lottery contract stats
-  const { data: currentRoundTotalUSDC, refetch: refetchTotalUSDC } = useReadContract({
-    address: LOTTERY_CONTRACT,
-    abi: LOTTERY_ABI,
-    functionName: 'currentRoundTotalUSDC',
-    query: { refetchInterval: 30000 }
-  });
-
-  // Check if user has approved USDC to Permit2
-  const hasPermit2Approval = permit2Allowance && permit2Allowance >= TICKET_PRICE;
-  const hasBalance = usdcBalance && usdcBalance >= TICKET_PRICE;
-
-  // Countdown timer using actual contract end time
+  // Real-time countdown using contract end time
   useEffect(() => {
-    if (!currentRoundEndTime) return;
-
+    if (!endTime) return;
+    
     const timer = setInterval(() => {
       const now = Math.floor(Date.now() / 1000);
-      const endTime = Number(currentRoundEndTime);
-      const distance = endTime - now;
+      const contractEndTime = Number(endTime);
+      const distance = contractEndTime - now;
 
       if (distance > 0) {
         setCountdown({
@@ -192,7 +184,7 @@ function RaffleApp() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [currentRoundEndTime]);
+  }, [endTime]);
 
   // Show notification
   const showNotification = (message, type = 'info') => {
@@ -200,12 +192,13 @@ function RaffleApp() {
     setTimeout(() => setNotification(null), 5000);
   };
 
-  // Approve USDC to Permit2 (one-time setup)
-  const handleApprovePermit2 = async () => {
-    if (!address) return;
+  // Approve USDC to raffle contract
+  const handleApproval = async () => {
+    if (!address || !ticketPriceUSDC) return;
 
     setIsApproving(true);
     try {
+      // Haptic feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
       }
@@ -214,128 +207,56 @@ function RaffleApp() {
         address: USDC_CONTRACT,
         abi: ERC20_ABI,
         functionName: 'approve',
-        args: [PERMIT2_CONTRACT, parseUnits('1000000', 6)], // Large approval for Permit2
+        args: [RAFFLE_CONTRACT, parseUnits('1000', 6)], // Approve 1000 USDC for multiple tickets
       });
 
-      showNotification('🔐 Permit2 approval submitted! This is a one-time setup...', 'info');
+      showNotification('💰 USDC approval submitted! Waiting for confirmation...', 'info');
       
       await waitForTransactionReceipt(wagmiConfig, { 
         hash,
         chainId: 8453
       });
 
+      // Success feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
       }
       
-      showNotification('✅ Permit2 approved! You can now buy tickets securely.', 'success');
-      refetchPermit2Allowance();
+      showNotification('✅ USDC approved! Now you can buy tickets.', 'success');
+      refetchAllowance();
       
     } catch (error) {
-      console.error('Permit2 approval failed:', error);
+      console.error('Approval failed:', error);
       
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('error');
       }
       
-      showNotification('❌ Permit2 approval failed. Please try again.', 'error');
+      showNotification('❌ USDC approval failed. Please try again.', 'error');
     } finally {
       setIsApproving(false);
     }
   };
 
-  // Create and sign permit for exact ticket amount
-  const createPermit = async () => {
-    if (!address) return null;
-
-    try {
-      // Get current nonce from Permit2
-      const { nonce } = await readContract(wagmiConfig, {
-        address: PERMIT2_CONTRACT,
-        abi: PERMIT2_ABI,
-        functionName: 'allowance',
-        args: [address, USDC_CONTRACT, RAFFLE_CONTRACT]
-      });
-
-      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
-
-      // EIP-712 domain and types for Permit2
-      const domain = {
-        name: 'Permit2',
-        chainId: 8453,
-        verifyingContract: PERMIT2_CONTRACT,
-      };
-
-      const types = {
-        PermitTransferFrom: [
-          { name: 'permitted', type: 'TokenPermissions' },
-          { name: 'spender', type: 'address' },
-          { name: 'nonce', type: 'uint256' },
-          { name: 'deadline', type: 'uint256' },
-        ],
-        TokenPermissions: [
-          { name: 'token', type: 'address' },
-          { name: 'amount', type: 'uint256' },
-        ],
-      };
-
-      const message = {
-        permitted: {
-          token: USDC_CONTRACT,
-          amount: TICKET_PRICE,
-        },
-        spender: RAFFLE_CONTRACT,
-        nonce: Number(nonce),
-        deadline,
-      };
-
-      // Sign the permit
-      const signature = await wagmiConfig.connector?.signTypedData({
-        domain,
-        types,
-        message,
-        primaryType: 'PermitTransferFrom',
-      });
-
-      return { nonce: Number(nonce), deadline, signature };
-    } catch (error) {
-      console.error('Failed to create permit:', error);
-      throw new Error('Failed to create secure payment signature');
-    }
-  };
-
-  // Buy ticket with Permit2
+  // Buy ticket using the actual contract function
   const handleBuyTicket = async () => {
-    if (!address || !hasPermit2Approval || !hasBalance) {
-      showNotification('❌ Please ensure you have USDC balance and Permit2 approval', 'error');
+    if (!address || !hasAllowance || !hasBalance) {
+      showNotification('Please ensure USDC is approved and you have sufficient balance', 'error');
       return;
     }
 
     setIsTransacting(true);
     
     try {
+      // Haptic feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
       }
 
-      showNotification('🔐 Creating secure payment signature...', 'info');
-      
-      // Create permit for exact amount
-      const permit = await createPermit();
-      if (!permit) throw new Error('Failed to create permit');
-
-      showNotification('📝 Purchasing ticket...', 'info');
-
       const hash = await writeContract(wagmiConfig, {
         address: RAFFLE_CONTRACT,
         abi: RAFFLE_ABI,
-        functionName: 'buyTicketWithPermit2',
-        args: [
-          TICKET_PRICE,
-          permit.nonce,
-          permit.deadline,
-          permit.signature
-        ],
+        functionName: 'buyTicket',
       });
 
       showNotification('⏳ Transaction submitted! Waiting for confirmation...', 'info');
@@ -345,22 +266,24 @@ function RaffleApp() {
         chainId: 8453
       });
       
+      // Success feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
       }
       
-      showNotification('🎉 Success! Raffle ticket purchased securely with Permit2!', 'success');
+      const ticketPrice = ticketPriceUSDC ? formatUnits(ticketPriceUSDC, 6) : '5.00';
+      showNotification(`🎉 Success! Ticket purchased for ${ticketPrice} USDC!`, 'success');
       
       // Refresh all data
       refetchBalance();
-      refetchRoundId();
-      refetchEndTime();
+      refetchAllowance();
+      refetchRoundInfo();
       refetchPlayers();
-      refetchTotalUSDC();
       
     } catch (error) {
       console.error('Transaction failed:', error);
       
+      // Error feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('error');
       }
@@ -372,17 +295,34 @@ function RaffleApp() {
         errorMessage = 'Transaction was rejected.';
       }
       
-      showNotification(`❌ ${errorMessage}`, 'error');
+      showNotification(errorMessage, 'error');
     } finally {
       setIsTransacting(false);
     }
   };
 
+  // Calculate time left for display
+  const getTimeLeftText = () => {
+    if (!endTime) return 'Loading...';
+    
+    const now = Math.floor(Date.now() / 1000);
+    const contractEndTime = Number(endTime);
+    const distance = contractEndTime - now;
+    
+    if (distance <= 0) return 'Round Ended';
+    
+    const hours = Math.floor(distance / 3600);
+    const minutes = Math.floor((distance % 3600) / 60);
+    
+    if (hours > 0) return `${hours}h ${minutes}m left`;
+    return `${minutes}m left`;
+  };
+
   // Share function
   const shareRaffle = () => {
-    const potValue = currentRoundTotalUSDC ? formatUnits(currentRoundTotalUSDC, 6) : '0';
-    const roundId = currentRoundId ? currentRoundId.toString() : '1';
-    const shareText = `🎰 Join URIM 50/50 Raffle Round ${roundId}! Current pot: $${potValue} USDC 💰\n\nSecure payments with Permit2 technology!`;
+    const potValue = totalUSDC ? formatUnits(totalUSDC, 6) : '0';
+    const ticketPrice = ticketPriceUSDC ? formatUnits(ticketPriceUSDC, 6) : '5.00';
+    const shareText = `🎰 Join the URIM 50/50 Raffle! Current pot: $${potValue} USDC with ${playerCount} players 💰\n\nTicket price: $${ticketPrice} USDC • Base Network\nRound ID: ${roundId || 'Loading'}`;
     const shareUrl = 'https://t.me/URIMRaffleBot';
     
     if (window.Telegram?.WebApp) {
@@ -390,6 +330,7 @@ function RaffleApp() {
         `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`
       );
     } else {
+      // Fallback for testing
       const fullUrl = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`;
       window.open(fullUrl, '_blank');
     }
@@ -409,48 +350,41 @@ function RaffleApp() {
 
       {/* Stats Modal */}
       {showStats && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="glass-card rounded-xl p-6 max-w-sm w-full">
             <h2 className="text-xl font-bold text-center mb-6">🎰 URIM 50/50 Raffle Stats 🎰</h2>
-            
             <div className="space-y-4">
-              <div className="bg-gray-800 rounded-lg p-4">
+              <div className="glass-card rounded-lg p-4">
                 <div className="text-sm text-gray-400">Round ID</div>
-                <div className="text-lg font-bold text-blue-400">
-                  #{currentRoundId ? currentRoundId.toString() : '1'}
-                </div>
+                <div className="text-lg font-bold">{roundId?.toString() || 'Loading...'}</div>
               </div>
-              
-              <div className="bg-gray-800 rounded-lg p-4">
+              <div className="glass-card rounded-lg p-4">
                 <div className="text-sm text-gray-400">Total Pool</div>
                 <div className="text-lg font-bold text-green-400">
-                  ${currentRoundTotalUSDC ? formatUnits(currentRoundTotalUSDC, 6) : '0.00'} USDC
+                  ${totalUSDC ? formatUnits(totalUSDC, 6) : '0.00'} USDC
                 </div>
               </div>
-              
-              <div className="bg-gray-800 rounded-lg p-4">
+              <div className="glass-card rounded-lg p-4">
                 <div className="text-sm text-gray-400">Players</div>
-                <div className="text-lg font-bold text-purple-400">
-                  {currentRoundPlayers ? currentRoundPlayers.toString() : '0'}
-                </div>
+                <div className="text-lg font-bold text-blue-400">{playerCount}</div>
               </div>
-              
-              <div className="bg-gray-800 rounded-lg p-4">
+              <div className="glass-card rounded-lg p-4">
                 <div className="text-sm text-gray-400">Time Left</div>
+                <div className="text-lg font-bold text-purple-400">{getTimeLeftText()}</div>
+              </div>
+              <div className="glass-card rounded-lg p-4">
+                <div className="text-sm text-gray-400">Ticket Price</div>
                 <div className="text-lg font-bold text-yellow-400">
-                  {countdown.hours}h {countdown.minutes}m {countdown.seconds}s
+                  ${ticketPriceUSDC ? formatUnits(ticketPriceUSDC, 6) : '5.00'} USDC
                 </div>
               </div>
             </div>
-
-            <div className="mt-6 text-center">
-              <button
-                onClick={() => setShowStats(false)}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-2 px-6 rounded-lg transition-all duration-300"
-              >
-                Close
-              </button>
-            </div>
+            <button
+              onClick={() => setShowStats(false)}
+              className="w-full mt-6 bg-gradient-to-r from-gray-600 to-gray-700 text-white py-2 rounded-lg"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
@@ -465,35 +399,27 @@ function RaffleApp() {
               className="w-full max-w-sm mx-auto rounded-xl shadow-2xl animate-pulse-glow"
             />
             <div className="absolute top-2 right-2 bg-purple-600 text-white text-xs px-2 py-1 rounded-full">
-              Round #{currentRoundId ? currentRoundId.toString() : '1'}
+              ID: {roundId?.toString() || 'Loading'}
             </div>
           </div>
           <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
             URIM 50/50 Raffle
           </h1>
-          <p className="text-sm text-gray-300 mt-1">Secure USDC payments with Permit2 technology!</p>
+          <p className="text-sm text-gray-300 mt-1">Direct USDC payments on Base Network!</p>
         </div>
 
-        {/* Current Pot from Lottery Contract */}
+        {/* Current Pot */}
         <div className="glass-card rounded-xl p-6 text-center">
           <h2 className="text-lg font-semibold text-blue-300 mb-2">🏆 Current Pot</h2>
           <div className="text-3xl font-bold text-green-400 mb-1">
-            ${currentRoundTotalUSDC ? formatUnits(currentRoundTotalUSDC, 6) : '0.00'} USDC
+            ${totalUSDC ? formatUnits(totalUSDC, 6) : '0.00'} USDC
           </div>
           <div className="text-sm text-gray-400">
-            {currentRoundPlayers ? currentRoundPlayers.toString() : '0'} players • Base Network
+            {playerCount} players • Base Network
           </div>
         </div>
 
-        {/* View Stats Button */}
-        <button
-          onClick={() => setShowStats(true)}
-          className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105"
-        >
-          📊 View Raffle Stats
-        </button>
-
-        {/* Countdown using Real Contract Data */}
+        {/* Countdown */}
         <div className="glass-card rounded-xl p-6">
           <h3 className="text-lg font-semibold text-purple-300 mb-4 text-center">⏰ Next Draw</h3>
           <div className="flex justify-center space-x-4">
@@ -507,6 +433,14 @@ function RaffleApp() {
             ))}
           </div>
         </div>
+
+        {/* Stats Button */}
+        <button
+          onClick={() => setShowStats(true)}
+          className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105"
+        >
+          📊 View Raffle Stats
+        </button>
 
         {/* Wallet Connection */}
         {!isConnected ? (
@@ -559,7 +493,7 @@ function RaffleApp() {
                 {usdcBalance ? formatUnits(usdcBalance, 6) : '0.00'} USDC
               </div>
               <div className="text-xs text-gray-500 mt-1">
-                Ticket price: 5.00 USDC
+                Ticket price: {ticketPriceUSDC ? formatUnits(ticketPriceUSDC, 6) : '5.00'} USDC
               </div>
             </div>
 
@@ -576,14 +510,6 @@ function RaffleApp() {
               <p className="text-sm text-gray-400 mt-1">Learn more about URIM raffles</p>
             </div>
 
-            {/* Permit2 Security Info */}
-            <div className="glass-card rounded-xl p-4 text-center">
-              <h4 className="text-sm font-semibold text-purple-300 mb-2">🔐 Enhanced Security</h4>
-              <p className="text-xs text-gray-400">
-                Using Permit2 technology for exact-amount approvals. No unlimited token permissions!
-              </p>
-            </div>
-
             {/* Ticket Purchase */}
             <div className="glass-card rounded-xl p-6">
               <h3 className="text-lg font-semibold mb-4 text-center">🎫 Buy Raffle Ticket</h3>
@@ -592,7 +518,9 @@ function RaffleApp() {
               <div className="bg-gray-800 rounded-lg p-4 mb-6 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Ticket Price:</span>
-                  <span className="text-green-400 font-semibold">5.00 USDC</span>
+                  <span className="text-green-400 font-semibold">
+                    {ticketPriceUSDC ? formatUnits(ticketPriceUSDC, 6) : '5.00'} USDC
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Your Balance:</span>
@@ -601,51 +529,57 @@ function RaffleApp() {
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Permit2 Setup:</span>
-                  <span className={`font-semibold ${hasPermit2Approval ? 'text-green-400' : 'text-yellow-400'}`}>
-                    {hasPermit2Approval ? '✅ Ready' : '⚠️ Required'}
+                  <span className="text-gray-400">USDC Approval:</span>
+                  <span className={`font-semibold ${hasAllowance ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {hasAllowance ? '✅ Approved' : '⏳ Required'}
                   </span>
                 </div>
               </div>
 
               {/* Buttons */}
               <div className="space-y-3">
-                {!hasPermit2Approval && (
+                {!hasAllowance && (
                   <button
-                    onClick={handleApprovePermit2}
+                    onClick={handleApproval}
                     disabled={isApproving || !hasBalance}
                     className="w-full bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-700 hover:to-orange-700 disabled:from-gray-600 disabled:to-gray-700 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 disabled:scale-100 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
                   >
                     {isApproving ? (
                       <>
                         <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                        <span>Setting up Permit2...</span>
+                        <span>Approving USDC...</span>
                       </>
                     ) : (
-                      <span>🔐 Setup Permit2 Security (One-time)</span>
+                      <span>💰 Approve USDC</span>
                     )}
                   </button>
                 )}
 
                 <button
                   onClick={handleBuyTicket}
-                  disabled={isTransacting || !hasPermit2Approval || !hasBalance}
+                  disabled={isTransacting || !hasAllowance || !hasBalance}
                   className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-600 disabled:to-gray-700 text-white font-bold py-4 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 disabled:scale-100 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
                 >
                   {isTransacting ? (
                     <>
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                      <span>Processing Secure Payment...</span>
+                      <span>Processing...</span>
                     </>
                   ) : (
-                    <span>🎫 Buy Ticket with Permit2 ($5 USDC)</span>
+                    <span>🎫 Buy Ticket</span>
                   )}
                 </button>
               </div>
 
               {!hasBalance && (
                 <div className="mt-3 text-red-400 text-sm text-center">
-                  ⚠️ Insufficient USDC balance. You need 5.00 USDC to buy a ticket.
+                  ⚠️ Insufficient USDC balance. You need {ticketPriceUSDC ? formatUnits(ticketPriceUSDC, 6) : '5.00'} USDC to buy a ticket.
+                </div>
+              )}
+
+              {!hasAllowance && hasBalance && (
+                <div className="mt-3 text-yellow-400 text-sm text-center">
+                  💰 First approve USDC spending for the raffle contract.
                 </div>
               )}
             </div>
@@ -664,19 +598,18 @@ function RaffleApp() {
         <div className="glass-card rounded-xl p-4 text-center text-sm">
           <div className="text-gray-400 mb-2">🔮 Features:</div>
           <div className="text-gray-500 space-y-1">
-            <div>• Permit2 Secure Payments</div>
+            <div>• Direct USDC Payments</div>
             <div>• 50/50 Prize Split</div>
-            <div>• USDC on Base Network</div>
-            <div>• Instant Payouts</div>
+            <div>• Base Network</div>
+            <div>• Chainlink VRF Randomness</div>
           </div>
         </div>
 
         {/* Contract Info */}
         <div className="text-center text-xs text-gray-500 space-y-1 pb-6">
-          <div>Raffle: {RAFFLE_CONTRACT.slice(0, 10)}...{RAFFLE_CONTRACT.slice(-6)}</div>
-          <div>Lottery: {LOTTERY_CONTRACT.slice(0, 10)}...{LOTTERY_CONTRACT.slice(-6)}</div>
+          <div>Contract: {RAFFLE_CONTRACT.slice(0, 10)}...{RAFFLE_CONTRACT.slice(-6)}</div>
           <div>USDC: {USDC_CONTRACT.slice(0, 10)}...{USDC_CONTRACT.slice(-6)}</div>
-          <div>Base Network • Enhanced Security</div>
+          <div>Base Network • Round: {roundId?.toString() || 'Loading'}</div>
         </div>
       </div>
     </div>
