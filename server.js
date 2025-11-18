@@ -33,30 +33,6 @@ app.get('/components/:file', (req, res) => {
   res.sendFile(filePath);
 });
 
-// Contract interaction functions
-async function getRaffleStats() {
-  try {
-    // This would need to be replaced with actual RPC calls
-    // For now, returning mock data structure that matches the expected format
-    const roundId = 1;
-    const totalUSDC = '35.00';
-    const totalPlayers = 7;
-    const timeLeft = '19h 23m';
-    
-    return {
-      roundId,
-      totalUSDC,
-      totalPlayers,
-      timeLeft,
-      contractAddress: '0x36086C5950325B971E5DC11508AB67A1CE30Dc69',
-      network: 'Base (8453)'
-    };
-  } catch (error) {
-    console.error('Error fetching raffle stats:', error);
-    return null;
-  }
-}
-
 // Telegram webhook endpoint
 app.post('/webhook', async (req, res) => {
   try {
@@ -70,32 +46,15 @@ app.post('/webhook', async (req, res) => {
       console.log(`Received message: ${text} from user: ${userId}`);
 
       if (text === '/start') {
+        // Send the web app button
         await sendWebAppMessage(chatId);
-      } else if (text === '/stats') {
-        await sendStatsMessage(chatId);
       }
     }
 
     if (callback_query) {
       const chatId = callback_query.message.chat.id;
       const userId = callback_query.from.id;
-      const data = callback_query.data;
-
-      console.log(`Callback query: ${data} from user: ${userId}`);
-
-      // Answer the callback query first
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-        callback_query_id: callback_query.id,
-        text: 'Loading...'
-      });
-
-      if (data === 'view_stats') {
-        await sendStatsMessage(chatId);
-      } else if (data === 'share_raffle') {
-        await sendShareMessage(chatId);
-      } else if (data === 'refresh_stats') {
-        await sendStatsMessage(chatId);
-      }
+      console.log(`Callback query from user: ${userId}`);
     }
 
     res.status(200).json({ ok: true });
@@ -140,103 +99,6 @@ async function sendWebAppMessage(chatId) {
     console.log('Web app message sent successfully');
   } catch (error) {
     console.error('Error sending web app message:', error.response?.data || error.message);
-  }
-}
-
-// Function to send stats message
-async function sendStatsMessage(chatId) {
-  try {
-    const stats = await getRaffleStats();
-    
-    if (!stats) {
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        chat_id: chatId,
-        text: '❌ Unable to fetch raffle stats. Please try again later.'
-      });
-      return;
-    }
-
-    const statsText = `🎰 URIM 50/50 Raffle Stats 🎰
-
-📊 Current Round: #${stats.roundId}
-💰 Total Pot: $${stats.totalUSDC} USDC
-👥 Players: ${stats.totalPlayers}
-⏰ Time Left: ${stats.timeLeft}
-
-📍 Contract: ${stats.contractAddress.slice(0, 10)}...${stats.contractAddress.slice(-6)}
-🌐 Network: ${stats.network}
-
-🎯 Winner gets 50% of the pot!`;
-
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      chat_id: chatId,
-      text: statsText,
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: '🔄 Refresh Stats',
-              callback_data: 'refresh_stats'
-            },
-            {
-              text: '🎮 Play Now',
-              web_app: {
-                url: DOMAIN
-              }
-            }
-          ]
-        ]
-      }
-    });
-
-    console.log('Stats message sent successfully');
-  } catch (error) {
-    console.error('Error sending stats message:', error.response?.data || error.message);
-  }
-}
-
-// Function to send share message
-async function sendShareMessage(chatId) {
-  try {
-    const stats = await getRaffleStats();
-    const potValue = stats ? stats.totalUSDC : '0.00';
-    
-    const shareText = `🎰 Join the URIM 50/50 Raffle! 
-
-💰 Current pot: $${potValue} USDC
-🎫 Ticket price: $5 USDC
-🏆 Winner takes 50%
-⚡ Base Network
-
-Join now: https://t.me/URIMRaffleBot
-ID: 874482516`;
-
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      chat_id: chatId,
-      text: shareText,
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: '📤 Share this Message',
-              switch_inline_query: shareText
-            }
-          ],
-          [
-            {
-              text: '🎮 Play Raffle',
-              web_app: {
-                url: DOMAIN
-              }
-            }
-          ]
-        ]
-      }
-    });
-
-    console.log('Share message sent successfully');
-  } catch (error) {
-    console.error('Error sending share message:', error.response?.data || error.message);
   }
 }
 
