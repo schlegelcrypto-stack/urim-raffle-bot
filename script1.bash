@@ -1,1 +1,5 @@
-curl "https://api.telegram.org/bot8323137830:AAFA3wnduW5_e_GCAOtSRMo0yRTKgYb1B6Y/setWebhook?url=https://your-domain.com/webhook/telegram"
+# If using Vercel
+vercel --prod
+
+# Then test your webhook again
+curl "https://api.telegram.org/bot8323137830:AAFA3wnduW5_e_GCAOtSRMo0yRTKgYb1B6Y/setWebhook?url=https://urim-raffle-bot.vercel.app/webhook"

@@ -16,13 +16,13 @@ const config = createConfig({
         name: 'URIM 50/50 Raffle',
         description: 'Win big with URIM 50/50 Raffle on Base using USDC',
         url: 'https://urim.live',
-        icons: ['https://www.infinityg.ai/assets/user-upload/1763444371347-1723df0c-8fbf-4fa3-9dda-241ca90a93cd.jpg']
+        icons: ['https://i.imgur.com/a/FxI9YIo.png']
       },
       showQrModal: true
     }),
     coinbaseWallet({
       appName: 'URIM Raffle',
-      appLogoUrl: 'https://www.infinityg.ai/assets/user-upload/1763444371347-1723df0c-8fbf-4fa3-9dda-241ca90a93cd.jpg'
+      appLogoUrl: 'https://i.imgur.com/a/FxI9YIo.png'
     })
   ],
   transports: {
