@@ -7,8 +7,9 @@ const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN || '8323137830:AAFA3wnduW5_e_GCAOtSRMo0yRTKgYb1B6Y';
 const DOMAIN = process.env.DOMAIN || 'https://urim-raffle-bot.vercel.app';
 
-// Contract address - CORRECTED
+// Contract addresses
 const RAFFLE_CONTRACT = '0x36086C5950325B971E5DC11508AB67A1CE30Dc69';
+const LOTTERY_CONTRACT = '0xFC448fF766bC5d4d01cF0d15cb20f5aA2400A3DA';
 
 app.use(express.json());
 app.use(express.static(__dirname, {
@@ -36,17 +37,28 @@ app.get('/components/:file', (req, res) => {
   res.sendFile(filePath);
 });
 
-// Mock function to get contract stats (replace with actual contract calls)
-const getContractStats = async () => {
-  // In production, these should be actual contract calls
-  // For now, returning mock data that matches the contract structure
-  return {
-    currentRoundId: '42',
-    currentRoundEndTime: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
-    currentRoundTotalUSDC: '1250.50', // Mock total in USDC
-    currentRoundPlayers: '25' // Mock player count
-  };
-};
+// Mock function to get contract stats (replace with actual Web3 calls)
+async function getContractStats() {
+  try {
+    // In production, replace these with actual contract reads using Web3.js or similar
+    return {
+      currentRoundId: '1',
+      currentRoundTotalUSDC: '125.50',
+      currentRoundPlayers: '25',
+      currentRoundEndTime: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
+      timeLeft: '1h 0m 0s'
+    };
+  } catch (error) {
+    console.error('Error fetching contract stats:', error);
+    return {
+      currentRoundId: '1',
+      currentRoundTotalUSDC: '0.00',
+      currentRoundPlayers: '0',
+      currentRoundEndTime: Math.floor(Date.now() / 1000) + 3600,
+      timeLeft: '1h 0m 0s'
+    };
+  }
+}
 
 // Telegram webhook endpoint
 app.post('/webhook', async (req, res) => {
@@ -76,10 +88,10 @@ app.post('/webhook', async (req, res) => {
 
       if (data === 'view_stats') {
         await sendStatsMessage(chatId);
-      } else if (data === 'share_raffle') {
-        await shareRaffle(chatId);
       } else if (data === 'refresh_stats') {
         await sendStatsMessage(chatId);
+      } else if (data === 'share_raffle') {
+        await sendShareMessage(chatId);
       }
 
       // Answer the callback query
@@ -133,44 +145,39 @@ async function sendWebAppMessage(chatId) {
   }
 }
 
-// Function to send stats message (clean text only)
+// Function to send stats message (clean, no graphics)
 async function sendStatsMessage(chatId) {
   try {
     const stats = await getContractStats();
     
-    // Calculate time left
-    const now = Math.floor(Date.now() / 1000);
-    const endTime = parseInt(stats.currentRoundEndTime);
-    const timeLeft = endTime - now;
-    
-    let timeLeftText = 'Round Ended';
-    if (timeLeft > 0) {
-      const hours = Math.floor(timeLeft / 3600);
-      const minutes = Math.floor((timeLeft % 3600) / 60);
-      timeLeftText = hours > 0 ? `${hours}h ${minutes}m left` : `${minutes}m left`;
-    }
-
     const statsText = `🎰 URIM 50/50 Raffle Stats 🎰
 
-Round ID: ${stats.currentRoundId}
+Round ID: #${stats.currentRoundId}
 Total Pool: $${stats.currentRoundTotalUSDC} USDC
 Players: ${stats.currentRoundPlayers}
-Time Left: ${timeLeftText}
+Time Left: ${stats.timeLeft}
 
-Contract: ${RAFFLE_CONTRACT}
+Raffle Contract: ${RAFFLE_CONTRACT}
+Lottery Contract: ${LOTTERY_CONTRACT}
 Network: Base (Chain ID: 8453)
-Payment: USDC with Permit2 security`;
+
+🔐 Secure payments with Permit2 technology
+🏆 50% of pool goes to winner
+⚡ Instant payouts in USDC`;
 
     const message = {
       chat_id: chatId,
       text: statsText,
+      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [
             {
               text: '🔄 Refresh Stats',
               callback_data: 'refresh_stats'
-            },
+            }
+          ],
+          [
             {
               text: '🎮 Play Now',
               web_app: {
@@ -189,30 +196,33 @@ Payment: USDC with Permit2 security`;
   }
 }
 
-// Function to handle share callback
-async function shareRaffle(chatId) {
+// Function to send share message
+async function sendShareMessage(chatId) {
   try {
     const stats = await getContractStats();
     
-    const shareText = `🎰 Join the URIM 50/50 Raffle! Current pot: $${stats.currentRoundTotalUSDC} USDC with ${stats.currentRoundPlayers} players 💰
+    const shareText = `🎰 Join URIM 50/50 Raffle Round ${stats.currentRoundId}!
 
-🔐 Secure Permit2 payments on Base Network
-🎫 Only $5 USDC per ticket
-🏆 50% goes to the winner
+Current pot: $${stats.currentRoundTotalUSDC} USDC
+Players: ${stats.currentRoundPlayers}
+Time left: ${stats.timeLeft}
 
-Round ID: ${stats.currentRoundId}`;
+🔐 Secure Permit2 payments
+🏆 50% goes to winner
+⚡ Base Network
 
-    const shareUrl = 'https://t.me/URIMRaffleBot';
-    
+Join now: https://t.me/URIMRaffleBot`;
+
     const message = {
       chat_id: chatId,
-      text: `Share this raffle with friends:\n\n${shareText}`,
+      text: shareText,
+      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [
             {
-              text: '📢 Share to Telegram',
-              url: `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`
+              text: '📢 Share with Friends',
+              switch_inline_query: shareText
             }
           ]
         ]
@@ -220,8 +230,9 @@ Round ID: ${stats.currentRoundId}`;
     };
 
     await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
+    console.log('Share message sent successfully');
   } catch (error) {
-    console.error('Error handling share:', error.response?.data || error.message);
+    console.error('Error sending share message:', error.response?.data || error.message);
   }
 }
 
@@ -232,7 +243,10 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     domain: DOMAIN,
     botToken: BOT_TOKEN ? 'configured' : 'missing',
-    contractAddress: RAFFLE_CONTRACT
+    contracts: {
+      raffle: RAFFLE_CONTRACT,
+      lottery: LOTTERY_CONTRACT
+    }
   });
 });
 
@@ -245,7 +259,9 @@ app.listen(PORT, () => {
   console.log(`🚀 URIM Raffle Bot server running on port ${PORT}`);
   console.log(`🌐 Domain: ${DOMAIN}`);
   console.log(`🤖 Bot token: ${BOT_TOKEN ? 'configured' : 'missing'}`);
-  console.log(`📝 Contract: ${RAFFLE_CONTRACT}`);
+  console.log(`📋 Contracts:`);
+  console.log(`   Raffle: ${RAFFLE_CONTRACT}`);
+  console.log(`   Lottery: ${LOTTERY_CONTRACT}`);
 });
 
 module.exports = app;
