@@ -1,77 +1,57 @@
 import React, { useState, useEffect } from 'react';
 import { useAccount, useConnect, useDisconnect, useReadContract, useConfig } from 'wagmi';
-import { writeContract, waitForTransactionReceipt, getBalance } from 'wagmi/actions';
+import { writeContract, waitForTransactionReceipt } from 'wagmi/actions';
 import { parseUnits, formatUnits } from 'viem';
 
 // Contract addresses
 const RAFFLE_CONTRACT = '0x36086C5950325B971E5DC11508AB67A1CE30Dc69';
-const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // Base USDC
+const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
-// Complete Contract ABI with all functions from your provided JSON
+// Complete Contract ABI
 const RAFFLE_ABI = [
-  {
-    "inputs": [],
-    "name": "ROUND_DURATION",
-    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "TICKET_PRICE_USDC",
-    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "buyTicket",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "currentRoundId",
-    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "currentRoundEndTime",
-    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "currentRoundTotalUSDC",
-    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "getCurrentRoundInfo",
-    "outputs": [
-      {"internalType": "uint256", "name": "roundId", "type": "uint256"},
-      {"internalType": "uint256", "name": "endTime", "type": "uint256"},
-      {"internalType": "uint256", "name": "totalPlayers", "type": "uint256"},
-      {"internalType": "uint256", "name": "totalUSDC", "type": "uint256"},
-      {"internalType": "uint256", "name": "timeLeft", "type": "uint256"},
-      {"internalType": "enum FiftyFiftyRaffle.RoundState", "name": "state", "type": "uint8"}
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "getCurrentPlayers",
-    "outputs": [{"internalType": "address[]", "name": "", "type": "address[]"}],
-    "stateMutability": "view",
-    "type": "function"
-  }
+  {"inputs":[{"internalType":"uint256","name":"subscriptionId","type":"uint256"}],"stateMutability":"nonpayable","type":"constructor"},
+  {"inputs":[{"internalType":"address","name":"have","type":"address"},{"internalType":"address","name":"want","type":"address"}],"name":"OnlyCoordinatorCanFulfill","type":"error"},
+  {"inputs":[{"internalType":"address","name":"have","type":"address"},{"internalType":"address","name":"owner","type":"address"},{"internalType":"address","name":"coordinator","type":"address"}],"name":"OnlyOwnerOrCoordinator","type":"error"},
+  {"inputs":[{"internalType":"address","name":"token","type":"address"}],"name":"SafeERC20FailedOperation","type":"error"},
+  {"inputs":[],"name":"ZeroAddress","type":"error"},
+  {"anonymous":false,"inputs":[{"indexed":false,"internalType":"address","name":"vrfCoordinator","type":"address"}],"name":"CoordinatorSet","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"roundId","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"requestId","type":"uint256"}],"name":"DrawInitiated","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"}],"name":"EmergencyWithdraw","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"roundId","type":"uint256"},{"indexed":true,"internalType":"address","name":"winner","type":"address"}],"name":"ManualWinnerSelected","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"}],"name":"OwnershipTransferRequested","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"from","type":"address"},{"indexed":true,"internalType":"address","name":"to","type":"address"}],"name":"OwnershipTransferred","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"roundId","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"endTime","type":"uint256"}],"name":"RoundStarted","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"player","type":"address"},{"indexed":true,"internalType":"uint256","name":"roundId","type":"uint256"}],"name":"TicketPurchased","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"roundId","type":"uint256"},{"indexed":true,"internalType":"address","name":"winner","type":"address"},{"indexed":false,"internalType":"uint256","name":"payoutUSDC","type":"uint256"}],"name":"WinnerSelected","type":"event"},
+  {"inputs":[],"name":"ROUND_DURATION","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"TICKET_PRICE_USDC","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"USDC","outputs":[{"internalType":"contract IERC20","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"acceptOwnership","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"buyTicket","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"callbackGasLimit","outputs":[{"internalType":"uint32","name":"","type":"uint32"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"currentRoundEndTime","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"currentRoundId","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"currentRoundPlayers","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"currentRoundTotalUSDC","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"drawWinner","outputs":[{"internalType":"uint256","name":"requestId","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"emergencyResetState","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"emergencySelectWinner","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"emergencyWithdrawUSDC","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"getContractBalance","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"getCurrentPlayers","outputs":[{"internalType":"address[]","name":"","type":"address[]"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"getCurrentRoundInfo","outputs":[{"internalType":"uint256","name":"roundId","type":"uint256"},{"internalType":"uint256","name":"endTime","type":"uint256"},{"internalType":"uint256","name":"totalPlayers","type":"uint256"},{"internalType":"uint256","name":"totalUSDC","type":"uint256"},{"internalType":"uint256","name":"timeLeft","type":"uint256"},{"internalType":"enum FiftyFiftyRaffle.RoundState","name":"state","type":"uint8"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"roundId","type":"uint256"}],"name":"getRoundResult","outputs":[{"components":[{"internalType":"address","name":"winner","type":"address"},{"internalType":"uint256","name":"totalPotUSDC","type":"uint256"},{"internalType":"uint256","name":"winnerPayoutUSDC","type":"uint256"},{"internalType":"uint256","name":"timestamp","type":"uint256"}],"internalType":"struct FiftyFiftyRaffle.RoundResult","name":"","type":"tuple"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"keyHash","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"numWords","outputs":[{"internalType":"uint32","name":"","type":"uint32"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"requestId","type":"uint256"},{"internalType":"uint256[]","name":"randomWords","type":"uint256[]"}],"name":"rawFulfillRandomWords","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"requestConfirmations","outputs":[{"internalType":"uint16","name":"","type":"uint16"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"roundResults","outputs":[{"internalType":"address","name":"winner","type":"address"},{"internalType":"uint256","name":"totalPotUSDC","type":"uint256"},{"internalType":"uint256","name":"winnerPayoutUSDC","type":"uint256"},{"internalType":"uint256","name":"timestamp","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"roundState","outputs":[{"internalType":"enum FiftyFiftyRaffle.RoundState","name":"","type":"uint8"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"s_subscriptionId","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"s_vrfCoordinator","outputs":[{"internalType":"contract IVRFCoordinatorV2Plus","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"address","name":"_vrfCoordinator","type":"address"}],"name":"setCoordinator","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"address","name":"to","type":"address"}],"name":"transferOwnership","outputs":[],"stateMutability":"nonpayable","type":"function"}
 ];
 
 const ERC20_ABI = [
@@ -115,7 +95,7 @@ function RaffleApp() {
   const [isApproving, setIsApproving] = useState(false);
   const [countdown, setCountdown] = useState({ hours: 0, minutes: 0, seconds: 0 });
   const [notification, setNotification] = useState(null);
-  const [showStatsModal, setShowStatsModal] = useState(false);
+  const [showStats, setShowStats] = useState(false);
 
   // Read contract data
   const { data: roundInfo, refetch: refetchRoundInfo } = useReadContract({
@@ -133,6 +113,16 @@ function RaffleApp() {
     abi: RAFFLE_ABI,
     functionName: 'TICKET_PRICE_USDC',
     query: { enabled: true }
+  });
+
+  const { data: players } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'getCurrentPlayers',
+    query: { 
+      enabled: true,
+      refetchInterval: 30000
+    }
   });
 
   // Read USDC balance
@@ -154,43 +144,49 @@ function RaffleApp() {
   });
 
   // Extract round data
-  const currentRoundId = roundInfo ? roundInfo[0] : 0n;
-  const roundEndTime = roundInfo ? roundInfo[1] : 0n;
-  const totalPlayers = roundInfo ? roundInfo[2] : 0n;
+  const currentRoundId = roundInfo ? Number(roundInfo[0]) : 0;
   const totalUSDC = roundInfo ? roundInfo[3] : 0n;
-  const timeLeft = roundInfo ? roundInfo[4] : 0n;
-  const roundState = roundInfo ? roundInfo[5] : 0;
-
-  const TICKET_PRICE = ticketPrice || parseUnits('5', 6); // Fallback to 5 USDC
+  const totalPlayers = roundInfo ? Number(roundInfo[2]) : 0;
+  const timeLeftSeconds = roundInfo ? Number(roundInfo[4]) : 0; // This is already the remaining time in seconds
 
   // Check if user has approved enough USDC
+  const TICKET_PRICE = ticketPrice || parseUnits('5', 6);
   const hasApproval = usdcAllowance && usdcAllowance >= TICKET_PRICE;
   const hasBalance = usdcBalance && usdcBalance >= TICKET_PRICE;
 
-  // Real-time countdown using contract end time
+  // Update countdown using timeLeft from contract
   useEffect(() => {
-    if (!roundEndTime) return;
-
-    const timer = setInterval(() => {
-      const now = Math.floor(Date.now() / 1000);
-      const endTimeSeconds = Number(roundEndTime);
-      const distance = Math.max(0, endTimeSeconds - now);
-
-      if (distance > 0) {
+    if (timeLeftSeconds > 0) {
+      const timer = setInterval(() => {
+        // Use the timeLeft directly from contract and decrement locally for smooth countdown
+        const now = Date.now();
+        const lastFetch = Date.now(); // You might want to store the actual fetch time
+        const adjustedTimeLeft = Math.max(0, timeLeftSeconds - Math.floor((now - lastFetch) / 1000));
+        
         setCountdown({
-          hours: Math.floor(distance / 3600),
-          minutes: Math.floor((distance % 3600) / 60),
-          seconds: distance % 60
+          hours: Math.floor(adjustedTimeLeft / 3600),
+          minutes: Math.floor((adjustedTimeLeft % 3600) / 60),
+          seconds: adjustedTimeLeft % 60
         });
-      } else {
-        setCountdown({ hours: 0, minutes: 0, seconds: 0 });
-        // Refetch round info when time expires
-        refetchRoundInfo();
-      }
-    }, 1000);
+      }, 1000);
 
-    return () => clearInterval(timer);
-  }, [roundEndTime, refetchRoundInfo]);
+      return () => clearInterval(timer);
+    } else {
+      // If no time left, show "Drawing Soon"
+      setCountdown({ hours: 0, minutes: 0, seconds: 0 });
+    }
+  }, [timeLeftSeconds]);
+
+  // Initial countdown calculation
+  useEffect(() => {
+    if (timeLeftSeconds > 0) {
+      setCountdown({
+        hours: Math.floor(timeLeftSeconds / 3600),
+        minutes: Math.floor((timeLeftSeconds % 3600) / 60),
+        seconds: timeLeftSeconds % 60
+      });
+    }
+  }, [timeLeftSeconds]);
 
   // Show notification
   const showNotification = (message, type = 'info') => {
@@ -204,7 +200,6 @@ function RaffleApp() {
 
     setIsApproving(true);
     try {
-      // Haptic feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
       }
@@ -213,7 +208,7 @@ function RaffleApp() {
         address: USDC_CONTRACT,
         abi: ERC20_ABI,
         functionName: 'approve',
-        args: [RAFFLE_CONTRACT, parseUnits('1000000', 6)], // Approve large amount
+        args: [RAFFLE_CONTRACT, parseUnits('1000000', 6)],
       });
 
       showNotification('Approval submitted! Waiting for confirmation...', 'info');
@@ -223,7 +218,6 @@ function RaffleApp() {
         chainId: 8453
       });
 
-      // Success feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
       }
@@ -254,7 +248,6 @@ function RaffleApp() {
     setIsTransacting(true);
     
     try {
-      // Haptic feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
       }
@@ -273,7 +266,6 @@ function RaffleApp() {
         chainId: 8453
       });
       
-      // Success feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
       }
@@ -288,7 +280,6 @@ function RaffleApp() {
     } catch (error) {
       console.error('Transaction failed:', error);
       
-      // Error feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('error');
       }
@@ -317,78 +308,23 @@ function RaffleApp() {
         `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`
       );
     } else {
-      // Fallback for testing
       const fullUrl = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`;
       window.open(fullUrl, '_blank');
     }
   };
 
-  // Stats Modal Component
-  const StatsModal = () => {
-    if (!showStatsModal) return null;
-
-    const formatTime = (seconds) => {
-      const hrs = Math.floor(seconds / 3600);
-      const mins = Math.floor((seconds % 3600) / 60);
-      const secs = seconds % 60;
-      return `${hrs}h ${mins}m ${secs}s`;
-    };
-
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-        <div className="glass-card rounded-xl p-6 w-full max-w-md">
-          <h2 className="text-xl font-bold text-center mb-6">🎰 URIM 50/50 Raffle Stats 🎰</h2>
-          
-          <div className="space-y-4">
-            <div className="bg-gray-800 rounded-lg p-4">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Round ID:</span>
-                <span className="font-bold text-blue-400">#{currentRoundId.toString()}</span>
-              </div>
-            </div>
-
-            <div className="bg-gray-800 rounded-lg p-4">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Total Pot:</span>
-                <span className="font-bold text-green-400">${formatUnits(totalUSDC, 6)} USDC</span>
-              </div>
-            </div>
-
-            <div className="bg-gray-800 rounded-lg p-4">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Players:</span>
-                <span className="font-bold text-purple-400">{totalPlayers.toString()}</span>
-              </div>
-            </div>
-
-            <div className="bg-gray-800 rounded-lg p-4">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Time Left:</span>
-                <span className="font-bold text-yellow-400">
-                  {Number(timeLeft) > 0 ? formatTime(Number(timeLeft)) : 'Drawing Soon!'}
-                </span>
-              </div>
-            </div>
-
-            <div className="bg-gray-800 rounded-lg p-4">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400">Status:</span>
-                <span className="font-bold text-orange-400">
-                  {roundState === 0 ? 'Active' : roundState === 1 ? 'Drawing' : 'Finished'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <button
-            onClick={() => setShowStatsModal(false)}
-            className="w-full mt-6 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    );
+  // Format countdown display
+  const formatCountdown = () => {
+    if (timeLeftSeconds <= 0) return "Drawing Soon";
+    
+    const { hours, minutes, seconds } = countdown;
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${seconds}s`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds}s`;
+    } else {
+      return `${seconds}s`;
+    }
   };
 
   return (
@@ -404,7 +340,45 @@ function RaffleApp() {
       )}
 
       {/* Stats Modal */}
-      <StatsModal />
+      {showStats && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="glass-card rounded-xl p-6 w-full max-w-sm space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-bold text-center">🎰 URIM 50/50 Raffle Stats 🎰</h2>
+              <button
+                onClick={() => setShowStats(false)}
+                className="text-gray-400 hover:text-white text-xl"
+              >
+                ×
+              </button>
+            </div>
+            
+            <div className="space-y-3">
+              <div className="glass-card p-4 rounded-lg">
+                <div className="text-sm text-gray-400">Round ID</div>
+                <div className="text-lg font-bold text-blue-400">{currentRoundId}</div>
+              </div>
+              
+              <div className="glass-card p-4 rounded-lg">
+                <div className="text-sm text-gray-400">Total Pot</div>
+                <div className="text-lg font-bold text-green-400">
+                  ${totalUSDC ? formatUnits(totalUSDC, 6) : '0.00'} USDC
+                </div>
+              </div>
+              
+              <div className="glass-card p-4 rounded-lg">
+                <div className="text-sm text-gray-400">Total Players</div>
+                <div className="text-lg font-bold text-purple-400">{totalPlayers}</div>
+              </div>
+              
+              <div className="glass-card p-4 rounded-lg">
+                <div className="text-sm text-gray-400">Time Left</div>
+                <div className="text-lg font-bold text-yellow-400">{formatCountdown()}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-md mx-auto p-4 space-y-6">
         {/* Header with Artwork */}
@@ -429,10 +403,10 @@ function RaffleApp() {
         <div className="glass-card rounded-xl p-6 text-center">
           <h2 className="text-lg font-semibold text-blue-300 mb-2">🏆 Current Pot</h2>
           <div className="text-3xl font-bold text-green-400 mb-1">
-            ${formatUnits(totalUSDC, 6)} USDC
+            ${totalUSDC ? formatUnits(totalUSDC, 6) : '0.00'} USDC
           </div>
           <div className="text-sm text-gray-400">
-            Round #{currentRoundId.toString()} • {totalPlayers.toString()} Players
+            Round {currentRoundId} • {totalPlayers} players
           </div>
         </div>
 
@@ -440,26 +414,34 @@ function RaffleApp() {
         <div className="glass-card rounded-xl p-6">
           <h3 className="text-lg font-semibold text-purple-300 mb-4 text-center">⏰ Next Draw</h3>
           <div className="flex justify-center space-x-4">
-            {['hours', 'minutes', 'seconds'].map((unit) => (
-              <div key={unit} className="text-center">
-                <div className="text-2xl font-bold text-white bg-gray-800 rounded-lg px-3 py-2">
-                  {countdown[unit].toString().padStart(2, '0')}
-                </div>
-                <div className="text-xs text-gray-400 mt-1 capitalize">{unit}</div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-white bg-gray-800 rounded-lg px-3 py-2">
+                {countdown.hours.toString().padStart(2, '0')}
               </div>
-            ))}
+              <div className="text-xs text-gray-400 mt-1">Hours</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-white bg-gray-800 rounded-lg px-3 py-2">
+                {countdown.minutes.toString().padStart(2, '0')}
+              </div>
+              <div className="text-xs text-gray-400 mt-1">Minutes</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-white bg-gray-800 rounded-lg px-3 py-2">
+                {countdown.seconds.toString().padStart(2, '0')}
+              </div>
+              <div className="text-xs text-gray-400 mt-1">Seconds</div>
+            </div>
           </div>
         </div>
 
         {/* Stats Button */}
-        <div className="flex justify-center">
-          <button
-            onClick={() => setShowStatsModal(true)}
-            className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105"
-          >
-            📊 View Raffle Stats
-          </button>
-        </div>
+        <button
+          onClick={() => setShowStats(true)}
+          className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105"
+        >
+          📊 View Raffle Stats
+        </button>
 
         {/* Wallet Connection */}
         {!isConnected ? (
@@ -475,7 +457,7 @@ function RaffleApp() {
                 >
                   <span>
                     {connector.name === 'Injected' ? '🌐 Browser Wallet' : 
-                     connector.name === 'WalletConnect' ? '📱 WalletConnect' :
+                     connector.name === 'WalletConnect' ? '📱 WalletConnect (Custom Chain)' :
                      connector.name === 'Coinbase Wallet' ? '🔷 Coinbase' : connector.name}
                   </span>
                 </button>
@@ -512,7 +494,7 @@ function RaffleApp() {
                 {usdcBalance ? formatUnits(usdcBalance, 6) : '0.00'} USDC
               </div>
               <div className="text-xs text-gray-500 mt-1">
-                Ticket price: {formatUnits(TICKET_PRICE, 6)} USDC
+                Ticket price: {TICKET_PRICE ? formatUnits(TICKET_PRICE, 6) : '5.00'} USDC
               </div>
             </div>
 
@@ -537,7 +519,9 @@ function RaffleApp() {
               <div className="bg-gray-800 rounded-lg p-4 mb-6 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Ticket Price:</span>
-                  <span className="text-green-400 font-semibold">{formatUnits(TICKET_PRICE, 6)} USDC</span>
+                  <span className="text-green-400 font-semibold">
+                    {TICKET_PRICE ? formatUnits(TICKET_PRICE, 6) : '5.00'} USDC
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Your Balance:</span>
@@ -583,14 +567,16 @@ function RaffleApp() {
                       <span>Processing...</span>
                     </>
                   ) : (
-                    <span>🎫 Buy Raffle Ticket (${formatUnits(TICKET_PRICE, 6)} USDC)</span>
+                    <span>
+                      🎫 Buy Raffle Ticket (${TICKET_PRICE ? formatUnits(TICKET_PRICE, 6) : '5.00'} USDC)
+                    </span>
                   )}
                 </button>
               </div>
 
               {!hasBalance && (
                 <div className="mt-3 text-red-400 text-sm text-center">
-                  ⚠️ Insufficient USDC balance. You need {formatUnits(TICKET_PRICE, 6)} USDC to buy a ticket.
+                  ⚠️ Insufficient USDC balance. You need {TICKET_PRICE ? formatUnits(TICKET_PRICE, 6) : '5.00'} USDC to buy a ticket.
                 </div>
               )}
             </div>
