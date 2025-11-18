@@ -35,7 +35,7 @@ function App() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 text-white">
         <img 
-          src="https://i.imgur.com/a/FxI9YIo.png" 
+          src="https://i.imgur.com/0v5f4rK.png" 
           alt="URIM Loading"
           className="w-32 h-32 object-contain mb-6 animate-pulse"
         />

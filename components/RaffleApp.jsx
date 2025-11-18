@@ -276,7 +276,7 @@ function RaffleApp() {
         <div className="text-center pt-6 pb-4">
           <div className="relative mb-4">
             <img 
-              src="https://i.imgur.com/a/FxI9YIo.png"
+              src="https://www.infinityg.ai/assets/user-upload/1763444371347-1723df0c-8fbf-4fa3-9dda-241ca90a93cd.jpg"
               alt="URIM 5050 Raffle"
               className="w-full max-w-sm mx-auto rounded-xl shadow-2xl animate-pulse-glow"
             />
