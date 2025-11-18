@@ -3,8 +3,8 @@ import { useAccount, useConnect, useDisconnect, useReadContract, useConfig } fro
 import { writeContract, waitForTransactionReceipt, getBalance } from 'wagmi/actions';
 import { parseUnits, formatUnits } from 'viem';
 
-// Contract addresses
-const RAFFLE_CONTRACT = '0x36086C5950325B971E5DC11508AB67A1CE30Dc69';
+// Contract addresses - CORRECTED CONTRACT ADDRESS
+const RAFFLE_CONTRACT = '0x74ef55f0bF8C05fF926B7D7f79450710fde4B64A';
 const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // Base USDC
 
 // Contract ABIs
@@ -87,10 +87,38 @@ function RaffleApp() {
   const [isApproving, setIsApproving] = useState(false);
   const [countdown, setCountdown] = useState({ hours: 0, minutes: 0, seconds: 0 });
   const [notification, setNotification] = useState(null);
-  const [contractBalance, setContractBalance] = useState(0n);
-  const [showStats, setShowStats] = useState(false);
+  const [showStatsModal, setShowStatsModal] = useState(false);
 
   const TICKET_PRICE = parseUnits('5', 6); // 5 USDC (6 decimals)
+
+  // Read contract stats
+  const { data: currentRoundId, refetch: refetchRoundId } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'currentroundId',
+    query: { refetchInterval: 30000 }
+  });
+
+  const { data: currentRoundEndTime, refetch: refetchEndTime } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'currentRoundendtime',
+    query: { refetchInterval: 30000 }
+  });
+
+  const { data: currentRoundTotalUSDC, refetch: refetchTotalUSDC } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'currentRoundTotalUSDC',
+    query: { refetchInterval: 30000 }
+  });
+
+  const { data: currentRoundPlayers, refetch: refetchPlayers } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'currentRoundPlayers',
+    query: { refetchInterval: 30000 }
+  });
 
   // Read USDC balance
   const { data: usdcBalance, refetch: refetchBalance } = useReadContract({
@@ -110,79 +138,27 @@ function RaffleApp() {
     query: { enabled: !!address }
   });
 
-  // Read contract stats
-  const { data: currentRoundId } = useReadContract({
-    address: RAFFLE_CONTRACT,
-    abi: RAFFLE_ABI,
-    functionName: 'currentroundId',
-    query: { enabled: true, refetchInterval: 30000 }
-  });
-
-  const { data: currentRoundEndTime } = useReadContract({
-    address: RAFFLE_CONTRACT,
-    abi: RAFFLE_ABI,
-    functionName: 'currentRoundendtime',
-    query: { enabled: true, refetchInterval: 30000 }
-  });
-
-  const { data: currentRoundTotalUSDC } = useReadContract({
-    address: RAFFLE_CONTRACT,
-    abi: RAFFLE_ABI,
-    functionName: 'currentRoundTotalUSDC',
-    query: { enabled: true, refetchInterval: 30000 }
-  });
-
-  const { data: currentRoundPlayers } = useReadContract({
-    address: RAFFLE_CONTRACT,
-    abi: RAFFLE_ABI,
-    functionName: 'currentRoundPlayers',
-    query: { enabled: true, refetchInterval: 30000 }
-  });
-
   // Check if user has approved enough USDC
   const hasApproval = usdcAllowance && usdcAllowance >= TICKET_PRICE;
   const hasBalance = usdcBalance && usdcBalance >= TICKET_PRICE;
 
-  // Fetch contract balance (for pot display)
-  const fetchContractBalance = async () => {
-    try {
-      const balance = await getBalance(wagmiConfig, {
-        address: USDC_CONTRACT,
-        token: USDC_CONTRACT,
-        chainId: 8453
-      });
-      setContractBalance(balance.value);
-    } catch (error) {
-      console.error('Failed to fetch contract balance:', error);
-    }
-  };
-
-  // Initialize and set up polling
+  // Countdown timer using actual contract end time
   useEffect(() => {
-    if (isConnected) {
-      fetchContractBalance();
-      const balanceInterval = setInterval(fetchContractBalance, 30000);
-      return () => clearInterval(balanceInterval);
-    }
-  }, [wagmiConfig, isConnected]);
+    if (!currentRoundEndTime) return;
 
-  // Countdown timer using contract end time
-  useEffect(() => {
     const timer = setInterval(() => {
-      if (currentRoundEndTime) {
-        const now = Math.floor(Date.now() / 1000);
-        const endTime = Number(currentRoundEndTime);
-        const distance = endTime - now;
+      const now = Math.floor(Date.now() / 1000);
+      const endTime = Number(currentRoundEndTime);
+      const distance = endTime - now;
 
-        if (distance > 0) {
-          setCountdown({
-            hours: Math.floor(distance / 3600),
-            minutes: Math.floor((distance % 3600) / 60),
-            seconds: Math.floor(distance % 60)
-          });
-        } else {
-          setCountdown({ hours: 0, minutes: 0, seconds: 0 });
-        }
+      if (distance > 0) {
+        setCountdown({
+          hours: Math.floor(distance / 3600),
+          minutes: Math.floor((distance % 3600) / 60),
+          seconds: distance % 60
+        });
+      } else {
+        setCountdown({ hours: 0, minutes: 0, seconds: 0 });
       }
     }, 1000);
 
@@ -277,10 +253,13 @@ function RaffleApp() {
       
       showNotification('🎉 Success! Ticket purchased for $5 USDC!', 'success');
       
-      // Refresh balances
+      // Refresh balances and stats
       refetchBalance();
       refetchAllowance();
-      fetchContractBalance();
+      refetchRoundId();
+      refetchEndTime();
+      refetchTotalUSDC();
+      refetchPlayers();
       
     } catch (error) {
       console.error('Transaction failed:', error);
@@ -320,74 +299,6 @@ function RaffleApp() {
     }
   };
 
-  // Stats Modal Component
-  const StatsModal = () => {
-    if (!showStats) return null;
-
-    const formatTimeLeft = () => {
-      if (!currentRoundEndTime) return 'Loading...';
-      
-      const now = Math.floor(Date.now() / 1000);
-      const endTime = Number(currentRoundEndTime);
-      const distance = endTime - now;
-      
-      if (distance <= 0) return 'Round ended';
-      
-      const hours = Math.floor(distance / 3600);
-      const minutes = Math.floor((distance % 3600) / 60);
-      const seconds = Math.floor(distance % 60);
-      
-      return `${hours}h ${minutes}m ${seconds}s`;
-    };
-
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-        <div className="glass-card rounded-xl p-6 max-w-sm w-full">
-          <h2 className="text-xl font-bold text-center mb-6 bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-transparent">
-            🎰 URIM 50/50 Raffle Stats 🎰
-          </h2>
-          
-          <div className="space-y-4">
-            <div className="glass-card rounded-lg p-4">
-              <div className="text-sm text-gray-400">Round ID</div>
-              <div className="text-lg font-semibold text-blue-400">
-                #{currentRoundId ? Number(currentRoundId).toString() : 'Loading...'}
-              </div>
-            </div>
-            
-            <div className="glass-card rounded-lg p-4">
-              <div className="text-sm text-gray-400">Time Left</div>
-              <div className="text-lg font-semibold text-purple-400">
-                {formatTimeLeft()}
-              </div>
-            </div>
-            
-            <div className="glass-card rounded-lg p-4">
-              <div className="text-sm text-gray-400">Total Prize Pool</div>
-              <div className="text-lg font-semibold text-green-400">
-                ${currentRoundTotalUSDC ? formatUnits(currentRoundTotalUSDC, 6) : '0.00'} USDC
-              </div>
-            </div>
-            
-            <div className="glass-card rounded-lg p-4">
-              <div className="text-sm text-gray-400">Total Players</div>
-              <div className="text-lg font-semibold text-yellow-400">
-                {currentRoundPlayers ? Number(currentRoundPlayers).toString() : '0'} players
-              </div>
-            </div>
-          </div>
-          
-          <button
-            onClick={() => setShowStats(false)}
-            className="w-full mt-6 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105"
-          >
-            Close Stats
-          </button>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900 text-white overflow-hidden">
       {/* Notification */}
@@ -401,7 +312,62 @@ function RaffleApp() {
       )}
 
       {/* Stats Modal */}
-      <StatsModal />
+      {showStatsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4">
+          <div className="glass-card rounded-xl p-6 max-w-md w-full">
+            <div className="text-center mb-6">
+              <h2 className="text-xl font-bold text-purple-300 mb-2">
+                🎰 URIM 50/50 Raffle Stats 🎰
+              </h2>
+            </div>
+            
+            <div className="space-y-4">
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">Round ID:</span>
+                  <span className="text-white font-semibold">
+                    #{currentRoundId ? currentRoundId.toString() : 'Loading...'}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">Total Pool:</span>
+                  <span className="text-green-400 font-semibold">
+                    ${currentRoundTotalUSDC ? formatUnits(currentRoundTotalUSDC, 6) : '0.00'} USDC
+                  </span>
+                </div>
+              </div>
+              
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">Players:</span>
+                  <span className="text-blue-400 font-semibold">
+                    {currentRoundPlayers ? currentRoundPlayers.toString() : '0'}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">Time Left:</span>
+                  <span className="text-yellow-400 font-semibold">
+                    {countdown.hours}h {countdown.minutes}m {countdown.seconds}s
+                  </span>
+                </div>
+              </div>
+            </div>
+            
+            <button
+              onClick={() => setShowStatsModal(false)}
+              className="w-full mt-6 bg-gradient-to-r from-purple-600 to-blue-600 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 hover:from-purple-700 hover:to-blue-700"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-md mx-auto p-4 space-y-6">
         {/* Header with Artwork */}
@@ -421,6 +387,14 @@ function RaffleApp() {
           </h1>
           <p className="text-sm text-gray-300 mt-1">Win big on Base Network with USDC!</p>
         </div>
+
+        {/* Stats Button */}
+        <button
+          onClick={() => setShowStatsModal(true)}
+          className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105"
+        >
+          📊 View Raffle Stats
+        </button>
 
         {/* Current Pot */}
         <div className="glass-card rounded-xl p-6 text-center">
@@ -447,14 +421,6 @@ function RaffleApp() {
             ))}
           </div>
         </div>
-
-        {/* Stats Button */}
-        <button
-          onClick={() => setShowStats(true)}
-          className="w-full bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 flex items-center justify-center space-x-2"
-        >
-          <span>🎰 View Raffle Stats 🎰</span>
-        </button>
 
         {/* Wallet Connection */}
         {!isConnected ? (
