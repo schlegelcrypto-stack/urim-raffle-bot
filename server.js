@@ -68,7 +68,7 @@ app.post('/webhook', async (req, res) => {
 async function sendWebAppMessage(chatId) {
   const message = {
     chat_id: chatId,
-    text: '🎰 *URIM 50/50 Raffle* 🎰\n\n💰 Win big on Base Network!\n🎫 Tickets: $5 USD each\n🏆 50% goes to winner\n⚡ Powered by Chainlink\n\nTap "Play Raffle" to start!',
+    text: '🎰 *URIM 50/50 Raffle* 🎰\n\n💰 Win big on Base Network!\n🎫 Tickets: $5 USDC each\n🏆 50% goes to winner\n⚡ Powered by USDC payments\n\n🌐 Visit: urim.live/lottery\n\nTap "Play Raffle" to start!',
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [

@@ -5,24 +5,24 @@ import { walletConnect, injected, coinbaseWallet } from 'wagmi/connectors';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider } from 'wagmi';
 
-// Create Wagmi config with your WalletConnect project ID
+// Create Wagmi config with your project ID
 const config = createConfig({
   chains: [base],
   connectors: [
     injected({ shimDisconnect: true }),
     walletConnect({
-      projectId: 'eac2fc87c235ce36192f197cd1c255f3', // Your WalletConnect project ID
+      projectId: 'eac2fc87c235ce36192f197cd1c255f3',
       metadata: {
         name: 'URIM 50/50 Raffle',
-        description: 'Win big with URIM 50/50 Raffle on Base with artwork #874482516',
+        description: 'Win big with URIM 50/50 Raffle on Base using USDC',
         url: 'https://urim.live',
-        icons: ['https://i.imgur.com/0v5f4rK.png']
+        icons: ['https://www.infinityg.ai/assets/user-upload/1763444371347-1723df0c-8fbf-4fa3-9dda-241ca90a93cd.jpg']
       },
       showQrModal: true
     }),
     coinbaseWallet({
-      appName: 'URIM Raffle #874482516',
-      appLogoUrl: 'https://i.imgur.com/0v5f4rK.png'
+      appName: 'URIM Raffle',
+      appLogoUrl: 'https://www.infinityg.ai/assets/user-upload/1763444371347-1723df0c-8fbf-4fa3-9dda-241ca90a93cd.jpg'
     })
   ],
   transports: {
