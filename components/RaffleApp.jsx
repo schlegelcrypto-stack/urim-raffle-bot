@@ -5,9 +5,9 @@ import { parseUnits, formatUnits } from 'viem';
 
 // Contract addresses
 const RAFFLE_CONTRACT = '0x36086C5950325B971E5DC11508AB67A1CE30Dc69';
-const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const USDC_CONTRACT = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'; // Base USDC
 
-// Complete Contract ABI
+// Complete Contract ABI with all functions
 const RAFFLE_ABI = [
   {"inputs":[{"internalType":"uint256","name":"subscriptionId","type":"uint256"}],"stateMutability":"nonpayable","type":"constructor"},
   {"inputs":[{"internalType":"address","name":"have","type":"address"},{"internalType":"address","name":"want","type":"address"}],"name":"OnlyCoordinatorCanFulfill","type":"error"},
@@ -96,42 +96,49 @@ function RaffleApp() {
   const [countdown, setCountdown] = useState({ hours: 0, minutes: 0, seconds: 0 });
   const [notification, setNotification] = useState(null);
   const [showStats, setShowStats] = useState(false);
+  const [localTimeLeft, setLocalTimeLeft] = useState(0);
 
-  // Read contract data
+  // Read contract data with more frequent polling (every 15 seconds)
   const { data: roundInfo, refetch: refetchRoundInfo } = useReadContract({
     address: RAFFLE_CONTRACT,
     abi: RAFFLE_ABI,
     functionName: 'getCurrentRoundInfo',
     query: { 
-      enabled: true,
-      refetchInterval: 30000 // Refresh every 30 seconds
+      refetchInterval: 15000, // Poll every 15 seconds
+      staleTime: 10000, // Consider data stale after 10 seconds
+      gcTime: 20000
     }
   });
 
-  const { data: ticketPrice } = useReadContract({
-    address: RAFFLE_CONTRACT,
-    abi: RAFFLE_ABI,
-    functionName: 'TICKET_PRICE_USDC',
-    query: { enabled: true }
-  });
-
-  const { data: players } = useReadContract({
+  const { data: players, refetch: refetchPlayers } = useReadContract({
     address: RAFFLE_CONTRACT,
     abi: RAFFLE_ABI,
     functionName: 'getCurrentPlayers',
     query: { 
-      enabled: true,
-      refetchInterval: 30000
+      refetchInterval: 15000, // Poll every 15 seconds
+      staleTime: 10000
     }
   });
 
-  // Read USDC balance
+  const { data: ticketPrice, refetch: refetchTicketPrice } = useReadContract({
+    address: RAFFLE_CONTRACT,
+    abi: RAFFLE_ABI,
+    functionName: 'TICKET_PRICE_USDC',
+    query: { 
+      refetchInterval: 60000 // Price changes less frequently
+    }
+  });
+
+  // Read USDC balance with frequent updates
   const { data: usdcBalance, refetch: refetchBalance } = useReadContract({
     address: USDC_CONTRACT,
     abi: ERC20_ABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    query: { enabled: !!address }
+    query: { 
+      enabled: !!address,
+      refetchInterval: 20000 // Check balance every 20 seconds
+    }
   });
 
   // Read USDC allowance
@@ -140,58 +147,91 @@ function RaffleApp() {
     abi: ERC20_ABI,
     functionName: 'allowance',
     args: address ? [address, RAFFLE_CONTRACT] : undefined,
-    query: { enabled: !!address }
+    query: { 
+      enabled: !!address,
+      refetchInterval: 30000
+    }
   });
 
-  // Extract round data
+  // Parse contract data
   const currentRoundId = roundInfo ? Number(roundInfo[0]) : 0;
-  const totalUSDC = roundInfo ? roundInfo[3] : 0n;
+  const endTime = roundInfo ? Number(roundInfo[1]) : 0;
   const totalPlayers = roundInfo ? Number(roundInfo[2]) : 0;
-  const timeLeftSeconds = roundInfo ? Number(roundInfo[4]) : 0; // This is already the remaining time in seconds
+  const totalUSDC = roundInfo ? roundInfo[3] : 0n;
+  const timeLeftSeconds = roundInfo ? Number(roundInfo[4]) : 0;
+  const roundState = roundInfo ? Number(roundInfo[5]) : 0;
 
-  // Check if user has approved enough USDC
-  const TICKET_PRICE = ticketPrice || parseUnits('5', 6);
+  const TICKET_PRICE = ticketPrice || parseUnits('5', 6); // Default to 5 USDC
+
+  // Check if user has approved enough USDC and has balance
   const hasApproval = usdcAllowance && usdcAllowance >= TICKET_PRICE;
   const hasBalance = usdcBalance && usdcBalance >= TICKET_PRICE;
 
-  // Update countdown using timeLeft from contract
+  // Local countdown with automatic refresh on changes
   useEffect(() => {
     if (timeLeftSeconds > 0) {
-      const timer = setInterval(() => {
-        // Use the timeLeft directly from contract and decrement locally for smooth countdown
-        const now = Date.now();
-        const lastFetch = Date.now(); // You might want to store the actual fetch time
-        const adjustedTimeLeft = Math.max(0, timeLeftSeconds - Math.floor((now - lastFetch) / 1000));
-        
-        setCountdown({
-          hours: Math.floor(adjustedTimeLeft / 3600),
-          minutes: Math.floor((adjustedTimeLeft % 3600) / 60),
-          seconds: adjustedTimeLeft % 60
-        });
-      }, 1000);
+      setLocalTimeLeft(timeLeftSeconds);
+    }
+  }, [timeLeftSeconds]);
 
-      return () => clearInterval(timer);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLocalTimeLeft(prev => {
+        if (prev <= 0) {
+          // When countdown reaches 0, force refresh data
+          refetchRoundInfo();
+          refetchPlayers();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [refetchRoundInfo, refetchPlayers]);
+
+  // Format countdown
+  useEffect(() => {
+    if (localTimeLeft > 0) {
+      const hours = Math.floor(localTimeLeft / 3600);
+      const minutes = Math.floor((localTimeLeft % 3600) / 60);
+      const seconds = localTimeLeft % 60;
+      setCountdown({ hours, minutes, seconds });
     } else {
-      // If no time left, show "Drawing Soon"
       setCountdown({ hours: 0, minutes: 0, seconds: 0 });
     }
-  }, [timeLeftSeconds]);
+  }, [localTimeLeft]);
 
-  // Initial countdown calculation
-  useEffect(() => {
-    if (timeLeftSeconds > 0) {
-      setCountdown({
-        hours: Math.floor(timeLeftSeconds / 3600),
-        minutes: Math.floor((timeLeftSeconds % 3600) / 60),
-        seconds: timeLeftSeconds % 60
-      });
-    }
-  }, [timeLeftSeconds]);
+  // Format time left display
+  const formatTimeLeft = () => {
+    if (localTimeLeft <= 0) return "Drawing Soon";
+    if (localTimeLeft < 60) return `${localTimeLeft}s`;
+    if (localTimeLeft < 3600) return `${Math.floor(localTimeLeft / 60)}m ${localTimeLeft % 60}s`;
+    
+    const hours = Math.floor(localTimeLeft / 3600);
+    const minutes = Math.floor((localTimeLeft % 3600) / 60);
+    return `${hours}h ${minutes}m`;
+  };
 
   // Show notification
   const showNotification = (message, type = 'info') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 5000);
+  };
+
+  // Force refresh all contract data
+  const refreshAllData = async () => {
+    try {
+      await Promise.all([
+        refetchRoundInfo(),
+        refetchPlayers(),
+        refetchBalance(),
+        refetchAllowance(),
+        refetchTicketPrice()
+      ]);
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+    }
   };
 
   // Approve USDC spending
@@ -200,6 +240,7 @@ function RaffleApp() {
 
     setIsApproving(true);
     try {
+      // Haptic feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
       }
@@ -208,7 +249,7 @@ function RaffleApp() {
         address: USDC_CONTRACT,
         abi: ERC20_ABI,
         functionName: 'approve',
-        args: [RAFFLE_CONTRACT, parseUnits('1000000', 6)],
+        args: [RAFFLE_CONTRACT, parseUnits('1000000', 6)], // Approve large amount
       });
 
       showNotification('Approval submitted! Waiting for confirmation...', 'info');
@@ -218,12 +259,15 @@ function RaffleApp() {
         chainId: 8453
       });
 
+      // Success feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
       }
       
       showNotification('✅ USDC approved successfully!', 'success');
-      refetchAllowance();
+      
+      // Refresh data after approval
+      setTimeout(refreshAllData, 2000);
       
     } catch (error) {
       console.error('Approval failed:', error);
@@ -238,7 +282,7 @@ function RaffleApp() {
     }
   };
 
-  // Buy ticket function
+  // Buy ticket function with immediate data refresh
   const handleBuyTicket = async () => {
     if (!address || !hasApproval || !hasBalance) {
       showNotification('Please ensure you have USDC balance and approval', 'error');
@@ -248,6 +292,7 @@ function RaffleApp() {
     setIsTransacting(true);
     
     try {
+      // Haptic feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
       }
@@ -266,20 +311,21 @@ function RaffleApp() {
         chainId: 8453
       });
       
+      // Success feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
       }
       
-      showNotification('🎉 Success! Ticket purchased!', 'success');
+      const ticketPriceFormatted = formatUnits(TICKET_PRICE, 6);
+      showNotification(`🎉 Success! Ticket purchased for $${ticketPriceFormatted} USDC!`, 'success');
       
-      // Refresh data
-      refetchBalance();
-      refetchAllowance();
-      refetchRoundInfo();
+      // Immediate data refresh after successful purchase
+      setTimeout(refreshAllData, 3000);
       
     } catch (error) {
       console.error('Transaction failed:', error);
       
+      // Error feedback
       if (window.Telegram?.WebApp?.HapticFeedback) {
         window.Telegram.WebApp.HapticFeedback.notificationOccurred('error');
       }
@@ -308,22 +354,9 @@ function RaffleApp() {
         `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`
       );
     } else {
+      // Fallback for testing
       const fullUrl = `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`;
       window.open(fullUrl, '_blank');
-    }
-  };
-
-  // Format countdown display
-  const formatCountdown = () => {
-    if (timeLeftSeconds <= 0) return "Drawing Soon";
-    
-    const { hours, minutes, seconds } = countdown;
-    if (hours > 0) {
-      return `${hours}h ${minutes}m ${seconds}s`;
-    } else if (minutes > 0) {
-      return `${minutes}m ${seconds}s`;
-    } else {
-      return `${seconds}s`;
     }
   };
 
@@ -341,41 +374,45 @@ function RaffleApp() {
 
       {/* Stats Modal */}
       {showStats && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="glass-card rounded-xl p-6 w-full max-w-sm space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl font-bold text-center">🎰 URIM 50/50 Raffle Stats 🎰</h2>
-              <button
-                onClick={() => setShowStats(false)}
-                className="text-gray-400 hover:text-white text-xl"
-              >
-                ×
-              </button>
-            </div>
-            
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="glass-card rounded-xl p-6 max-w-sm w-full">
+            <h3 className="text-xl font-bold text-center mb-4">🎰 URIM 50/50 Raffle Stats 🎰</h3>
             <div className="space-y-3">
-              <div className="glass-card p-4 rounded-lg">
-                <div className="text-sm text-gray-400">Round ID</div>
-                <div className="text-lg font-bold text-blue-400">{currentRoundId}</div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Round ID:</span>
+                <span className="text-white font-semibold">#{currentRoundId}</span>
               </div>
-              
-              <div className="glass-card p-4 rounded-lg">
-                <div className="text-sm text-gray-400">Total Pot</div>
-                <div className="text-lg font-bold text-green-400">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Total Pot:</span>
+                <span className="text-green-400 font-semibold">
                   ${totalUSDC ? formatUnits(totalUSDC, 6) : '0.00'} USDC
-                </div>
+                </span>
               </div>
-              
-              <div className="glass-card p-4 rounded-lg">
-                <div className="text-sm text-gray-400">Total Players</div>
-                <div className="text-lg font-bold text-purple-400">{totalPlayers}</div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Players:</span>
+                <span className="text-blue-400 font-semibold">{totalPlayers}</span>
               </div>
-              
-              <div className="glass-card p-4 rounded-lg">
-                <div className="text-sm text-gray-400">Time Left</div>
-                <div className="text-lg font-bold text-yellow-400">{formatCountdown()}</div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Time Left:</span>
+                <span className="text-purple-400 font-semibold">{formatTimeLeft()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Contract:</span>
+                <span className="text-gray-300 font-mono text-xs">
+                  {RAFFLE_CONTRACT.slice(0, 6)}...{RAFFLE_CONTRACT.slice(-4)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Network:</span>
+                <span className="text-gray-300">Base (ID: 8453)</span>
               </div>
             </div>
+            <button
+              onClick={() => setShowStats(false)}
+              className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
@@ -399,14 +436,31 @@ function RaffleApp() {
           <p className="text-sm text-gray-300 mt-1">Win big on Base Network with USDC!</p>
         </div>
 
-        {/* Current Pot */}
+        {/* Real-time Stats Display */}
         <div className="glass-card rounded-xl p-6 text-center">
-          <h2 className="text-lg font-semibold text-blue-300 mb-2">🏆 Current Pot</h2>
-          <div className="text-3xl font-bold text-green-400 mb-1">
-            ${totalUSDC ? formatUnits(totalUSDC, 6) : '0.00'} USDC
+          <h2 className="text-lg font-semibold text-blue-300 mb-2">🏆 Live Stats</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <div className="text-2xl font-bold text-green-400">
+                ${totalUSDC ? formatUnits(totalUSDC, 6) : '0.00'}
+              </div>
+              <div className="text-xs text-gray-400">Total Pot (USDC)</div>
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-blue-400">
+                {totalPlayers}
+              </div>
+              <div className="text-xs text-gray-400">Players</div>
+            </div>
           </div>
-          <div className="text-sm text-gray-400">
-            Round {currentRoundId} • {totalPlayers} players
+          <div className="mt-4">
+            <div className="text-sm text-gray-400">Round #{currentRoundId}</div>
+            <button
+              onClick={() => setShowStats(true)}
+              className="mt-2 text-purple-400 hover:text-purple-300 text-sm underline"
+            >
+              📊 View Detailed Stats
+            </button>
           </div>
         </div>
 
@@ -414,34 +468,19 @@ function RaffleApp() {
         <div className="glass-card rounded-xl p-6">
           <h3 className="text-lg font-semibold text-purple-300 mb-4 text-center">⏰ Next Draw</h3>
           <div className="flex justify-center space-x-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-white bg-gray-800 rounded-lg px-3 py-2">
-                {countdown.hours.toString().padStart(2, '0')}
+            {['hours', 'minutes', 'seconds'].map((unit) => (
+              <div key={unit} className="text-center">
+                <div className="text-2xl font-bold text-white bg-gray-800 rounded-lg px-3 py-2">
+                  {countdown[unit].toString().padStart(2, '0')}
+                </div>
+                <div className="text-xs text-gray-400 mt-1 capitalize">{unit}</div>
               </div>
-              <div className="text-xs text-gray-400 mt-1">Hours</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-white bg-gray-800 rounded-lg px-3 py-2">
-                {countdown.minutes.toString().padStart(2, '0')}
-              </div>
-              <div className="text-xs text-gray-400 mt-1">Minutes</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-white bg-gray-800 rounded-lg px-3 py-2">
-                {countdown.seconds.toString().padStart(2, '0')}
-              </div>
-              <div className="text-xs text-gray-400 mt-1">Seconds</div>
-            </div>
+            ))}
+          </div>
+          <div className="text-center mt-3 text-sm text-gray-400">
+            {formatTimeLeft()}
           </div>
         </div>
-
-        {/* Stats Button */}
-        <button
-          onClick={() => setShowStats(true)}
-          className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105"
-        >
-          📊 View Raffle Stats
-        </button>
 
         {/* Wallet Connection */}
         {!isConnected ? (
@@ -494,7 +533,7 @@ function RaffleApp() {
                 {usdcBalance ? formatUnits(usdcBalance, 6) : '0.00'} USDC
               </div>
               <div className="text-xs text-gray-500 mt-1">
-                Ticket price: {TICKET_PRICE ? formatUnits(TICKET_PRICE, 6) : '5.00'} USDC
+                Ticket price: {formatUnits(TICKET_PRICE, 6)} USDC
               </div>
             </div>
 
@@ -519,9 +558,7 @@ function RaffleApp() {
               <div className="bg-gray-800 rounded-lg p-4 mb-6 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Ticket Price:</span>
-                  <span className="text-green-400 font-semibold">
-                    {TICKET_PRICE ? formatUnits(TICKET_PRICE, 6) : '5.00'} USDC
-                  </span>
+                  <span className="text-green-400 font-semibold">{formatUnits(TICKET_PRICE, 6)} USDC</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Your Balance:</span>
@@ -567,19 +604,25 @@ function RaffleApp() {
                       <span>Processing...</span>
                     </>
                   ) : (
-                    <span>
-                      🎫 Buy Raffle Ticket (${TICKET_PRICE ? formatUnits(TICKET_PRICE, 6) : '5.00'} USDC)
-                    </span>
+                    <span>🎫 Buy Raffle Ticket (${formatUnits(TICKET_PRICE, 6)} USDC)</span>
                   )}
                 </button>
               </div>
 
               {!hasBalance && (
                 <div className="mt-3 text-red-400 text-sm text-center">
-                  ⚠️ Insufficient USDC balance. You need {TICKET_PRICE ? formatUnits(TICKET_PRICE, 6) : '5.00'} USDC to buy a ticket.
+                  ⚠️ Insufficient USDC balance. You need {formatUnits(TICKET_PRICE, 6)} USDC to buy a ticket.
                 </div>
               )}
             </div>
+
+            {/* Manual Refresh Button */}
+            <button
+              onClick={refreshAllData}
+              className="w-full bg-gradient-to-r from-gray-700 to-gray-600 hover:from-gray-600 hover:to-gray-500 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300"
+            >
+              🔄 Refresh Data
+            </button>
 
             {/* Share Button */}
             <button
@@ -598,6 +641,7 @@ function RaffleApp() {
             <div>• USDC Payments on Base</div>
             <div>• 50/50 Prize Split</div>
             <div>• Instant Payouts</div>
+            <div>• Real-time Updates</div>
           </div>
         </div>
 

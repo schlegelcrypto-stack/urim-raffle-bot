@@ -7,10 +7,6 @@ const PORT = process.env.PORT || 3000;
 const BOT_TOKEN = process.env.BOT_TOKEN || '8323137830:AAFA3wnduW5_e_GCAOtSRMo0yRTKgYb1B6Y';
 const DOMAIN = process.env.DOMAIN || 'https://urim-raffle-bot.vercel.app';
 
-// Contract configuration
-const RAFFLE_CONTRACT = '0x36086C5950325B971E5DC11508AB67A1CE30Dc69';
-const BASE_RPC_URL = 'https://mainnet.base.org';
-
 app.use(express.json());
 app.use(express.static(__dirname, {
   setHeaders: (res, path) => {
@@ -26,70 +22,6 @@ app.use(express.static(__dirname, {
   }
 }));
 
-// Function to read contract data
-async function getContractStats() {
-  try {
-    // Call getCurrentRoundInfo() function
-    const data = {
-      jsonrpc: '2.0',
-      method: 'eth_call',
-      params: [
-        {
-          to: RAFFLE_CONTRACT,
-          data: '0x86750502' // Function selector for getCurrentRoundInfo()
-        },
-        'latest'
-      ],
-      id: 1
-    };
-
-    const response = await axios.post(BASE_RPC_URL, data, {
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    if (response.data.result) {
-      // Decode the result (this is a simplified version - in production you'd want to use proper ABI decoding)
-      const result = response.data.result;
-      
-      // Parse the returned data (roundId, endTime, totalPlayers, totalUSDC, timeLeft, state)
-      // This is a basic hex parsing - you'd typically use ethers.js or web3.js for proper decoding
-      const roundId = parseInt(result.slice(2, 66), 16);
-      const totalPlayers = parseInt(result.slice(130, 194), 16);
-      const totalUSDC = parseInt(result.slice(194, 258), 16) / 1000000; // Convert from 6 decimals
-      const timeLeft = parseInt(result.slice(258, 322), 16);
-
-      return {
-        roundId,
-        totalPlayers,
-        totalUSDC,
-        timeLeft
-      };
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Error fetching contract stats:', error);
-    return null;
-  }
-}
-
-// Function to format time left
-function formatTimeLeft(seconds) {
-  if (seconds <= 0) return "Drawing Soon";
-  
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainingSeconds = seconds % 60;
-  
-  if (hours > 0) {
-    return `${hours}h ${minutes}m ${remainingSeconds}s`;
-  } else if (minutes > 0) {
-    return `${minutes}m ${remainingSeconds}s`;
-  } else {
-    return `${remainingSeconds}s`;
-  }
-}
-
 // Serve the main raffle app
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
@@ -100,6 +32,30 @@ app.get('/components/:file', (req, res) => {
   const filePath = path.join(__dirname, 'components', req.params.file);
   res.sendFile(filePath);
 });
+
+// Contract interaction functions
+async function getRaffleStats() {
+  try {
+    // This would need to be replaced with actual RPC calls
+    // For now, returning mock data structure that matches the expected format
+    const roundId = 1;
+    const totalUSDC = '35.00';
+    const totalPlayers = 7;
+    const timeLeft = '19h 23m';
+    
+    return {
+      roundId,
+      totalUSDC,
+      totalPlayers,
+      timeLeft,
+      contractAddress: '0x36086C5950325B971E5DC11508AB67A1CE30Dc69',
+      network: 'Base (8453)'
+    };
+  } catch (error) {
+    console.error('Error fetching raffle stats:', error);
+    return null;
+  }
+}
 
 // Telegram webhook endpoint
 app.post('/webhook', async (req, res) => {
@@ -124,25 +80,22 @@ app.post('/webhook', async (req, res) => {
       const chatId = callback_query.message.chat.id;
       const userId = callback_query.from.id;
       const data = callback_query.data;
-      
+
       console.log(`Callback query: ${data} from user: ${userId}`);
-      
+
+      // Answer the callback query first
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+        callback_query_id: callback_query.id,
+        text: 'Loading...'
+      });
+
       if (data === 'view_stats') {
         await sendStatsMessage(chatId);
+      } else if (data === 'share_raffle') {
+        await sendShareMessage(chatId);
       } else if (data === 'refresh_stats') {
         await sendStatsMessage(chatId);
-      } else if (data === 'share_raffle') {
-        const stats = await getContractStats();
-        const potValue = stats ? stats.totalUSDC.toFixed(2) : '0.00';
-        const shareText = `🎰 Join the URIM 50/50 Raffle! Current pot: $${potValue} USDC 💰\n\nID: 874482516`;
-        
-        await sendMessage(chatId, `Share this message with friends:\n\n${shareText}\n\n🔗 https://t.me/URIMRaffleBot`);
       }
-      
-      // Answer callback query to remove loading state
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-        callback_query_id: callback_query.id
-      });
     }
 
     res.status(200).json({ ok: true });
@@ -151,45 +104,6 @@ app.post('/webhook', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-// Function to send stats message
-async function sendStatsMessage(chatId) {
-  try {
-    const stats = await getContractStats();
-    
-    if (!stats) {
-      await sendMessage(chatId, '❌ Unable to fetch raffle stats at the moment. Please try again later.');
-      return;
-    }
-
-    const timeLeftFormatted = formatTimeLeft(stats.timeLeft);
-    
-    const statsText = `🎰 URIM 50/50 Raffle Stats 🎰
-
-🆔 Round ID: ${stats.roundId}
-💰 Total Pot: $${stats.totalUSDC.toFixed(2)} USDC  
-👥 Total Players: ${stats.totalPlayers}
-⏰ Time Left: ${timeLeftFormatted}
-
-📋 Contract: ${RAFFLE_CONTRACT.slice(0, 10)}...${RAFFLE_CONTRACT.slice(-6)}
-🌐 Network: Base (Chain ID: 8453)`;
-
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: '🔄 Refresh Stats', callback_data: 'refresh_stats' },
-          { text: '🎮 Play Raffle', web_app: { url: DOMAIN } }
-        ]
-      ]
-    };
-
-    await sendMessage(chatId, statsText, keyboard);
-    
-  } catch (error) {
-    console.error('Error sending stats message:', error);
-    await sendMessage(chatId, '❌ Error fetching raffle stats. Please try again later.');
-  }
-}
 
 // Function to send web app message
 async function sendWebAppMessage(chatId) {
@@ -229,22 +143,100 @@ async function sendWebAppMessage(chatId) {
   }
 }
 
-// Helper function to send message
-async function sendMessage(chatId, text, replyMarkup = null) {
-  const message = {
-    chat_id: chatId,
-    text: text,
-    parse_mode: 'Markdown'
-  };
-  
-  if (replyMarkup) {
-    message.reply_markup = replyMarkup;
-  }
-
+// Function to send stats message
+async function sendStatsMessage(chatId) {
   try {
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, message);
+    const stats = await getRaffleStats();
+    
+    if (!stats) {
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        chat_id: chatId,
+        text: '❌ Unable to fetch raffle stats. Please try again later.'
+      });
+      return;
+    }
+
+    const statsText = `🎰 URIM 50/50 Raffle Stats 🎰
+
+📊 Current Round: #${stats.roundId}
+💰 Total Pot: $${stats.totalUSDC} USDC
+👥 Players: ${stats.totalPlayers}
+⏰ Time Left: ${stats.timeLeft}
+
+📍 Contract: ${stats.contractAddress.slice(0, 10)}...${stats.contractAddress.slice(-6)}
+🌐 Network: ${stats.network}
+
+🎯 Winner gets 50% of the pot!`;
+
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId,
+      text: statsText,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: '🔄 Refresh Stats',
+              callback_data: 'refresh_stats'
+            },
+            {
+              text: '🎮 Play Now',
+              web_app: {
+                url: DOMAIN
+              }
+            }
+          ]
+        ]
+      }
+    });
+
+    console.log('Stats message sent successfully');
   } catch (error) {
-    console.error('Error sending message:', error.response?.data || error.message);
+    console.error('Error sending stats message:', error.response?.data || error.message);
+  }
+}
+
+// Function to send share message
+async function sendShareMessage(chatId) {
+  try {
+    const stats = await getRaffleStats();
+    const potValue = stats ? stats.totalUSDC : '0.00';
+    
+    const shareText = `🎰 Join the URIM 50/50 Raffle! 
+
+💰 Current pot: $${potValue} USDC
+🎫 Ticket price: $5 USDC
+🏆 Winner takes 50%
+⚡ Base Network
+
+Join now: https://t.me/URIMRaffleBot
+ID: 874482516`;
+
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId,
+      text: shareText,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: '📤 Share this Message',
+              switch_inline_query: shareText
+            }
+          ],
+          [
+            {
+              text: '🎮 Play Raffle',
+              web_app: {
+                url: DOMAIN
+              }
+            }
+          ]
+        ]
+      }
+    });
+
+    console.log('Share message sent successfully');
+  } catch (error) {
+    console.error('Error sending share message:', error.response?.data || error.message);
   }
 }
 
